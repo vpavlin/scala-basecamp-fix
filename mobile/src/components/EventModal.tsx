@@ -20,11 +20,17 @@ export interface EventDraft {
   description?: string;
 }
 
+export interface CalOption { id: string; name: string; color: string }
+
 export function EventModal({
-  visible, initial, onSave, onDelete, onClose,
+  visible, initial, calendars, calendarId, onPickCalendar, canPickCalendar, onSave, onDelete, onClose,
 }: {
   visible: boolean;
   initial: EventDraft;
+  calendars: CalOption[];        // writable calendars to choose from
+  calendarId: string;            // currently selected target
+  onPickCalendar: (id: string) => void;
+  canPickCalendar: boolean;      // false when editing (can't move an event)
   onSave: (d: EventDraft) => void;
   onDelete?: () => void;
   onClose: () => void;
@@ -75,6 +81,24 @@ export function EventModal({
         <View style={s.sheet}>
           <ScrollView keyboardShouldPersistTaps="handled">
             <Text style={s.h}>{initial.id ? "Edit event" : "New event"}</Text>
+
+            <Text style={s.label}>Calendar</Text>
+            <View style={s.calRow}>
+              {calendars.map((c) => {
+                const on = c.id === calendarId;
+                return (
+                  <Pressable
+                    key={c.id}
+                    disabled={!canPickCalendar}
+                    onPress={() => onPickCalendar(c.id)}
+                    style={[s.calChip, on && s.calChipOn, !canPickCalendar && !on && { opacity: 0.4 }]}
+                  >
+                    <View style={[s.calDot, { backgroundColor: c.color }]} />
+                    <Text style={[s.calChipT, on && { color: C.text }]}>{c.name}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
 
             <Text style={s.label}>Title</Text>
             <TextInput style={s.input} value={title} onChangeText={setTitle} placeholder="Event title" placeholderTextColor={C.sub} autoFocus={!initial.id} />
@@ -133,4 +157,9 @@ const s = StyleSheet.create({
   pillT: { color: C.text, fontSize: 14, fontWeight: "600" },
   btn: { borderRadius: 10, paddingVertical: 13, alignItems: "center", marginTop: 12 },
   btnT: { fontSize: 15, fontWeight: "700" },
+  calRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  calChip: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: C.bg, borderRadius: 999, borderWidth: 1, borderColor: C.border, paddingHorizontal: 12, paddingVertical: 7 },
+  calChipOn: { borderColor: C.primary, backgroundColor: C.surface },
+  calChipT: { color: C.sub, fontSize: 13, fontWeight: "600" },
+  calDot: { width: 10, height: 10, borderRadius: 5 },
 });
