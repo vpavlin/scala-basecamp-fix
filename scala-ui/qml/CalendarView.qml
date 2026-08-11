@@ -1,1251 +1,472 @@
-import QtQuick 2.15
-import QtQuick.Controls 2.15
-import QtQuick.Layouts 1.15
+// Scala calendar — pure-QML view over the `scala` core module.
+//
+// Rewritten from scratch to render correctly on the Logos design system that
+// Basecamp bundles (Perun's view is the reference): only LogosText + LogosButton
+// (the safe component baseline), Theme.palette.* / Theme.spacing.* tokens, and
+// NUMERIC font.pixelSize (Theme.typography.<size> tokens don't exist on the
+// bundled DS — that was the old view's invisible text). Inputs use plain
+// TextField styled with tokens. Feature parity with the Android app: month grid,
+// per-day events, event create/edit/delete, calendar create/join/share.
+//
+// The core is reached with a synchronous logos.callModule shim; returns come back
+// DOUBLE-JSON-encoded, so `j()` unwraps up to twice.
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
 
 import Logos.Theme
 import Logos.Controls
 
 Item {
     id: root
-    width: 800
-    height: 600
+    width: 900
+    height: 640
 
-    // ── Core access (PURE QML — call the scala CORE directly, no view backend) ─
-    // A redundant C++ view backend (1:1 proxy to the core) was the ui_qml+backend
-    // +custom-core combo that stopped this view from loading in Basecamp. The core
-    // exposes every action the view needs, so we call it directly. logos.callModule
-    // is SYNCHRONOUS — never call it during view construction (freezes the view);
-    // the first refresh is deferred with Qt.callLater so the view paints first.
+    // ── core bridge ──────────────────────────────────────────────────────────
     property bool ready: false
-    property string currentIdentity: ""
-
     function core(method, args) {
         if (typeof logos === "undefined" || !logos.callModule) return ""
         var r = logos.callModule("scala", method, args || [])
-        return (r === undefined || r === null) ? "" : String(r)
+        return (r === undefined || r === null) ? "" : (typeof r === "string" ? r : r)
     }
-    // backend.X(args) → synchronous core call, so every existing call-site works.
-    readonly property var backend: ({
-        getIdentity:         function()     { return root.core("getIdentity", []) },
-        createCalendar:      function(n, c) { return root.core("createCalendar", [n, c]) },
-        listCalendars:       function()     { return root.core("listCalendars", []) },
-        deleteCalendar:      function(id)   { return root.core("deleteCalendar", [id]) },
-        createEvent:         function(c, e) { return root.core("createEvent", [c, e]) },
-        updateEvent:         function(e)    { return root.core("updateEvent", [e]) },
-        deleteEvent:         function(id)   { return root.core("deleteEvent", [id]) },
-        listEvents:          function(id)   { return root.core("listEvents", [id]) },
-        getEvent:            function(id)   { return root.core("getEvent", [id]) },
-        shareCalendar:       function(id)   { return root.core("shareCalendar", [id]) },
-        joinSharedCalendar:  function(i, k) { return root.core("joinSharedCalendar", [i, k]) },
-        getSyncStatus:       function(id)   { return root.core("getSyncStatus", [id]) },
-        generateShareLink:   function(id)   { return root.core("generateShareLink", [id]) },
-        parseShareLink:      function(l)    { return root.core("parseShareLink", [l]) },
-        handleShareLink:     function(l)    { return root.core("handleShareLink", [l]) },
-        searchEvents:        function(q)    { return root.core("searchEvents", [q]) },
-        getPendingReminders: function()     { return root.core("getPendingReminders", []) },
-        setSetting:          function(k, v) { return root.core("setSetting", [k, v]) },
-        getSetting:          function(k, d) { return root.core("getSetting", [k, d]) }
-    })
-    // backend.X() is now synchronous → deliver the value to the success callback
-    // immediately (keeps every _watch(...) call-site unchanged).
-    function _watch(value, ok, err) { if (ok) ok(value) }
-
-    // Cross-module returns come back DOUBLE-JSON-encoded through the bridge: a
-    // single JSON.parse yields a *string* (then a for-loop iterates its chars and
-    // every field reads undefined). Parse until we reach a non-string. Returns
-    // the parsed array/object, or `fallback` on empty/malformed.
-    function _json(raw, fallback) {
-        var v = raw;
+    function j(raw, fallback) {
+        var v = raw
         for (var i = 0; i < 3 && typeof v === "string"; i++) {
-            var t = v.trim();
-            if (t === "") return fallback;
-            try { v = JSON.parse(t); } catch (e) { return (i === 0 ? fallback : v); }
+            var t = v.trim()
+            if (t === "") return fallback
+            try { v = JSON.parse(t) } catch (e) { return (i === 0 ? fallback : v) }
         }
-        return (v === undefined || v === null) ? fallback : v;
+        return (v === undefined || v === null) ? fallback : v
     }
 
-    Component.onCompleted: Qt.callLater(function() {
+    // ── state ────────────────────────────────────────────────────────────────
+    property var calendars: []          // [{id,name,color,encryptionKey,...}]
+    property var events: []             // flat list across all calendars
+    property date viewMonth: new Date()   // any date in the shown month
+    property date selectedDay: new Date()
+    property string filterCalId: ""      // "" = all calendars
+
+    readonly property var monthNames: ["January","February","March","April","May","June","July","August","September","October","November","December"]
+    readonly property var weekDays: ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+
+    Component.onCompleted: Qt.callLater(function () {
         root.ready = (typeof logos !== "undefined" && !!logos.callModule)
-        if (root.ready) {
-            root.currentIdentity = root.core("getIdentity", [])
-            _loadSettings()
-            _refreshAll()
-        }
+        if (root.ready) refresh()
     })
 
-    // ── Theme colors (from Logos design system) ───────────────────────────
-    readonly property color primaryColor: "#89b4fa"
-    readonly property color bgColor: "#1e1e2e"
-    readonly property color toolbarColor: "#2a2a3c"
-    readonly property color sidebarBg: "#2a2a3c"
-    readonly property color newEventBtnColor: "#89b4fa"
-
-    // ── State ──────────────────────────────────────────────────────────────
-    property var selectedEvent: null
-    property bool showEventDetails: false
-    property var calendarList: []
-    property var allEvents: []
-    property string selectedCalendarId: ""
-    property string viewMode: "month"   // "month", "week", or "day"
-    property date weekStartDate: getMonday(new Date())
-    property date dayViewDate: new Date()
-    property bool searchActive: false
-    property var searchResults: []
-
-    // ── Preset colors for new calendar dialog ──────────────────────────────
-    property var presetColors: [
-        "#a6e3a1", "#89b4fa", "#FF9800", "#9C27B0",
-        "#F44336", "#00BCD4", "#795548", "#607D8B"
-    ]
-
-    // ── Data helpers (async via logos.watch) ───────────────────────────────
-    function _refreshAll() {
-        _refreshCalendars()
-    }
-
-    function _refreshCalendars() {
+    // ── data ─────────────────────────────────────────────────────────────────
+    function refresh() {
         if (!root.ready) return
-        _watch(backend.listCalendars(),
-            function(value) {
-                calendarList = _json(value, [])
-                updateSidebarModel()
-                _refreshEvents()
-            },
-            function(error) { console.warn("[scala] listCalendars failed:", error) }
-        )
-    }
-
-    function _refreshEvents() {
-        if (!root.ready || calendarList.length === 0) return
-        allEvents = []
-        var remaining = calendarList.length
-        for (var i = 0; i < calendarList.length; i++) {
-            var calId = calendarList[i].id
-            _watch(backend.listEvents(calId),
-                function(value) {
-                    var evts = _json(value, [])
-                    allEvents = allEvents.concat(evts)
-                    remaining--
-                    if (remaining === 0) {
-                        // All events loaded — update grid
-                        calendarGrid.events = eventsForGrid()
-                    }
-                },
-                function(error) {
-                    console.warn("[scala] listEvents failed for", calId, error)
-                    remaining--
-                }
-            )
+        calendars = j(core("listCalendars", []), [])
+        var all = []
+        for (var i = 0; i < calendars.length; i++) {
+            var evs = j(core("listEvents", [calendars[i].id]), [])
+            for (var k = 0; k < evs.length; k++) all.push(evs[k])
         }
+        events = all
     }
-
-    // Legacy wrappers (keep names for compatibility with existing code)
-    function refreshCalendars() { _refreshCalendars() }
-    function refreshEvents() { _refreshEvents() }
-
-    function updateSidebarModel() {
-        sidebarCalendarModel.clear()
-        for (var i = 0; i < calendarList.length; i++) {
-            var c = calendarList[i]
-            sidebarCalendarModel.append({
-                calId: c.id,
-                calName: c.name,
-                calColor: c.color,
-                calVisible: true,
-                creatorId: c.creatorId || ""
-            })
+    function calColor(calId) {
+        for (var i = 0; i < calendars.length; i++) if (calendars[i].id === calId) return calendars[i].color || Theme.palette.primary
+        return Theme.palette.primary
+    }
+    function calName(calId) {
+        for (var i = 0; i < calendars.length; i++) if (calendars[i].id === calId) return calendars[i].name
+        return ""
+    }
+    function writableCalendars() {
+        var out = []
+        for (var i = 0; i < calendars.length; i++) if (calendars[i].encryptionKey || calendars[i].creatorId !== undefined) out.push(calendars[i])
+        return out.length ? out : calendars
+    }
+    function sameDay(a, b) {
+        return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+    }
+    function eventsOnDay(d) {
+        var out = []
+        for (var i = 0; i < events.length; i++) {
+            if (filterCalId !== "" && events[i].calendarId !== filterCalId) continue
+            if (sameDay(new Date(events[i].startTime), d)) out.push(events[i])
         }
+        out.sort(function (a, b) { return a.startTime - b.startTime })
+        return out
     }
-
-    function findCalendar(calId) {
-        for (var i = 0; i < calendarList.length; i++) {
-            if (calendarList[i].id === calId) return calendarList[i]
+    function dotsOnDay(d) {
+        var cols = []
+        for (var i = 0; i < events.length && cols.length < 4; i++) {
+            if (filterCalId !== "" && events[i].calendarId !== filterCalId) continue
+            if (sameDay(new Date(events[i].startTime), d)) cols.push(calColor(events[i].calendarId))
         }
-        return null
+        return cols
     }
-
-    function eventsForGrid() {
-        var dots = []
-        var month = calendarGrid.displayMonth
-        var year = calendarGrid.displayYear
-        for (var i = 0; i < allEvents.length; i++) {
-            var ev = allEvents[i]
-            var d = new Date(ev.startTime)
-            if (d.getMonth() === month && d.getFullYear() === year) {
-                var cal = findCalendar(ev.calendarId)
-                dots.push({ day: d.getDate(), color: cal ? cal.color : "#89b4fa" })
-            }
-        }
-        return dots
-    }
-
-    // ── Week view helpers ────────────────────────────────────────────────
-    function getMonday(d) {
-        var date = new Date(d)
-        var day = date.getDay()
-        var diff = (day === 0 ? -6 : 1) - day  // Monday = 1
-        date.setDate(date.getDate() + diff)
-        date.setHours(0, 0, 0, 0)
-        return date
-    }
-
-    function weekDayDate(dayOffset) {
-        var d = new Date(weekStartDate)
-        d.setDate(d.getDate() + dayOffset)
+    function fmtTime(ms) { return Qt.formatTime(new Date(ms), "hh:mm") }
+    function pad(n) { return (n < 10 ? "0" : "") + n }
+    function fmtDateInput(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) }
+    function fmtTimeInput(d) { return pad(d.getHours()) + ":" + pad(d.getMinutes()) }
+    function parseDateTime(dateStr, timeStr) {
+        var dp = dateStr.split("-"), tp = timeStr.split(":")
+        var d = new Date()
+        if (dp.length === 3) d = new Date(parseInt(dp[0]), parseInt(dp[1]) - 1, parseInt(dp[2]))
+        d.setHours(tp.length >= 1 ? parseInt(tp[0]) || 0 : 0, tp.length >= 2 ? parseInt(tp[1]) || 0 : 0, 0, 0)
         return d
     }
 
-    function eventsForDate(d) {
-        var result = []
-        for (var i = 0; i < allEvents.length; i++) {
-            var ev = allEvents[i]
-            var evDate = new Date(ev.startTime)
-            if (evDate.getDate() === d.getDate()
-                && evDate.getMonth() === d.getMonth()
-                && evDate.getFullYear() === d.getFullYear()) {
-                result.push(ev)
-            }
-        }
-        // Sort by start time
-        result.sort(function(a, b) { return a.startTime - b.startTime })
-        return result
-    }
-
-    function formatTime(ms) {
-        var d = new Date(ms)
-        var h = d.getHours()
-        var m = d.getMinutes()
-        return (h < 10 ? "0" : "") + h + ":" + (m < 10 ? "0" : "") + m
-    }
-
-    function goToPrevWeek() {
-        var d = new Date(weekStartDate)
-        d.setDate(d.getDate() - 7)
-        weekStartDate = d
-    }
-
-    function goToNextWeek() {
-        var d = new Date(weekStartDate)
-        d.setDate(d.getDate() + 7)
-        weekStartDate = d
-    }
-
-    function weekRangeLabel() {
-        var start = weekStartDate
-        var end = new Date(weekStartDate)
-        end.setDate(end.getDate() + 6)
-        var months = ["Jan","Feb","Mar","Apr","May","Jun",
-                      "Jul","Aug","Sep","Oct","Nov","Dec"]
-        if (start.getMonth() === end.getMonth()) {
-            return months[start.getMonth()] + " " + start.getDate()
-                   + "–" + end.getDate() + ", " + start.getFullYear()
-        }
-        return months[start.getMonth()] + " " + start.getDate()
-               + " – " + months[end.getMonth()] + " " + end.getDate()
-               + ", " + end.getFullYear()
-    }
-
-    // ── Day view helpers ──────────────────────────────────────────────
-    function goToPrevDay() {
-        var d = new Date(dayViewDate)
-        d.setDate(d.getDate() - 1)
-        dayViewDate = d
-    }
-
-    function goToNextDay() {
-        var d = new Date(dayViewDate)
-        d.setDate(d.getDate() + 1)
-        dayViewDate = d
-    }
-
-    function goToToday() {
-        dayViewDate = new Date()
-    }
-
-    function dayViewLabel() {
-        var months = ["January","February","March","April","May","June",
-                      "July","August","September","October","November","December"]
-        var days = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"]
-        return days[dayViewDate.getDay()] + ", " + months[dayViewDate.getMonth()] + " "
-               + dayViewDate.getDate() + ", " + dayViewDate.getFullYear()
-    }
-
-    function isDayViewToday() {
-        var now = new Date()
-        return dayViewDate.getDate() === now.getDate()
-            && dayViewDate.getMonth() === now.getMonth()
-            && dayViewDate.getFullYear() === now.getFullYear()
-    }
-
-    function eventsForDayView() {
-        return eventsForDate(dayViewDate)
-    }
-
-    function msFromDateTime(dateStr, timeStr, fallbackNow) {
-        if (!dateStr || dateStr === "") {
-            return fallbackNow ? Date.now() : 0
-        }
-        var parts = dateStr.split("-")
-        var y = parseInt(parts[0]), m = parseInt(parts[1]) - 1, day = parseInt(parts[2])
-        var h = 0, min = 0
-        if (timeStr && timeStr !== "") {
-            var tp = timeStr.split(":")
-            h = parseInt(tp[0])
-            min = parseInt(tp[1])
-        }
-        return new Date(y, m, day, h, min).getTime()
-    }
-
-    // ── Sidebar calendar model ─────────────────────────────────────────────
-    ListModel { id: sidebarCalendarModel }
-
-    // ── Settings helpers ───────────────────────────────────────────────────
-    function _loadSettings() {
-        if (!root.ready) return
-        _watch(backend.getSetting("defaultView", "month"),
-            function(value) {
-                if (value === "month" || value === "week" || value === "day")
-                    viewMode = value
-            },
-            function(error) { console.warn("[scala] getSetting failed:", error) }
-        )
-    }
-
-    // ── Ctrl+F shortcut ───────────────────────────────────────────────────
-    Shortcut {
-        sequence: "Ctrl+F"
-        onActivated: {
-            searchActive = true
-            searchField.forceActiveFocus()
-        }
-    }
+    // ── layout ───────────────────────────────────────────────────────────────
+    Rectangle { anchors.fill: parent; color: Theme.palette.background }
 
     RowLayout {
         anchors.fill: parent
         spacing: 0
 
-        // ── Sidebar ────────────────────────────────────────────────────────
-        CalendarSidebar {
-            Layout.preferredWidth: 220
+        // ── sidebar: calendars ─────────────────────────────────────────────
+        Rectangle {
+            Layout.preferredWidth: 240
             Layout.fillHeight: true
-            calendarModel: sidebarCalendarModel
-            currentIdentity: (root.ready && root.backend) ? root.currentIdentity : ""
+            color: Theme.palette.backgroundInset
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: Theme.spacing.medium
+                spacing: Theme.spacing.small
 
-            onCalendarToggled: function(calId, vis) {
-                console.log("Calendar toggled:", calId, vis);
-            }
-            onNewCalendarRequested: {
-                newCalendarDialog.open()
-            }
-            onCalendarSelected: function(calId) {
-                selectedCalendarId = calId
-                console.log("Calendar selected:", calId);
-            }
-            onShareRequested: function(calId, calName) {
-                if (!root.ready) return
-                _watch(backend.generateShareLink(calId),
-                    function(value) {
-                        shareDialog.shareLink = value
-                        shareDialog.open()
-                    },
-                    function(error) { console.warn("[scala] generateShareLink failed:", error) }
-                )
-                shareDialog.calendarName = calName
-                shareDialog.open()
+                LogosText { text: "Calendars"; color: Theme.palette.text; font.pixelSize: 18; font.weight: Theme.typography.weightMedium }
+
+                // "All calendars" row
+                Rectangle {
+                    Layout.fillWidth: true; height: 34; radius: Theme.spacing.radiusSmall
+                    color: root.filterCalId === "" ? Theme.palette.backgroundSecondary : "transparent"
+                    RowLayout {
+                        anchors.fill: parent; anchors.leftMargin: Theme.spacing.small; anchors.rightMargin: Theme.spacing.small; spacing: Theme.spacing.small
+                        Rectangle { width: 12; height: 12; radius: 6; color: Theme.palette.textTertiary }
+                        LogosText { text: "All calendars"; color: Theme.palette.text; font.pixelSize: 14; Layout.fillWidth: true; elide: Text.ElideRight }
+                    }
+                    MouseArea { anchors.fill: parent; onClicked: root.filterCalId = "" }
+                }
+
+                ListView {
+                    Layout.fillWidth: true; Layout.fillHeight: true; clip: true
+                    model: root.calendars
+                    spacing: 2
+                    delegate: Rectangle {
+                        width: ListView.view.width; height: 34; radius: Theme.spacing.radiusSmall
+                        color: root.filterCalId === modelData.id ? Theme.palette.backgroundSecondary : "transparent"
+                        RowLayout {
+                            anchors.fill: parent; anchors.leftMargin: Theme.spacing.small; anchors.rightMargin: Theme.spacing.small; spacing: Theme.spacing.small
+                            Rectangle { width: 12; height: 12; radius: 6; color: modelData.color || Theme.palette.primary }
+                            LogosText { text: modelData.name || "(unnamed)"; color: Theme.palette.text; font.pixelSize: 14; Layout.fillWidth: true; elide: Text.ElideRight }
+                            LogosText {
+                                text: "share"; color: Theme.palette.primary; font.pixelSize: 12
+                                visible: !!modelData.encryptionKey || true
+                                MouseArea { anchors.fill: parent; onClicked: root.openShare(modelData) }
+                            }
+                        }
+                        MouseArea { anchors.fill: parent; z: -1; onClicked: root.filterCalId = modelData.id }
+                    }
+                }
+
+                LogosButton { Layout.fillWidth: true; text: "+ New calendar"; onClicked: newCalPopup.open() }
+                LogosButton { Layout.fillWidth: true; text: "Join calendar"; onClicked: joinPopup.open() }
             }
         }
 
-        // ── Main area ──────────────────────────────────────────────────────
+        // ── main: month + day detail ───────────────────────────────────────
         ColumnLayout {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
+            Layout.fillWidth: true; Layout.fillHeight: true
             spacing: 0
 
-            // ── Toolbar (Logos design system) ──────────────────────────────
-            LogosToolBar {
-                Layout.fillWidth: true
-
-                LogosText {
-                    text: "Scala Calendar"
-                    font.pixelSize: 18
-                    font.weight: Font.Bold
-                    color: "#cdd6f4"
-                }
-
-                LogosText {
-                    readonly property string ident: (root.ready && root.backend) ? root.currentIdentity : ""
-                    text: ident.length > 0 ? "ID: " + ident.substring(0,8) + "..." : ""
-                    font.pixelSize: 12
-                    color: "#9399b2"
-                    visible: text !== ""
-                }
-
-                Item { Layout.fillWidth: true }
-
-                // ── View mode toggle ──────────────────────────────
-                LogosButton {
-                    text: "Month"
-                    onClicked: viewMode = "month"
-                }
-
-                LogosButton {
-                    text: "Week"
-                    onClicked: viewMode = "week"
-                }
-
-                LogosButton {
-                    text: "Day"
-                    onClicked: viewMode = "day"
-                }
-
-                LogosToolSeparator {}
-
-                // ── New Event button ──────────────────────────────
-                LogosButton {
-                    text: "+ New Event"
-                    onClicked: {
-                        eventModal.clear();
-                        eventModal.calendars = calendarList;
-                        eventModal.open();
-                    }
-                }
-
-                // ── Join calendar button (opens the share dialog on the Join tab) ──
-                LogosButton {
-                    text: "Join"
-                    onClicked: {
-                        shareDialog.calendarName = "";
-                        shareDialog.shareLink = "";
-                        shareDialog.open();
-                        if (shareDialog.tabBar) shareDialog.tabBar.currentIndex = 1;
-                    }
-                }
-
-                    Text {
-                        readonly property string ident: (root.ready && root.backend) ? root.currentIdentity : ""
-                        text: ident.length > 0 ? "ID: " + ident.substring(0,8) + "..." : ""
-                        color: "#ccddee"
-                        font.pixelSize: 11
-                        visible: text !== ""
-                    }
-
-                    // ── Search button + field ────────────────────────
-                LogosIconButton {
-                    onClicked: {
-                        searchActive = !searchActive
-                        if (searchActive) searchField.forceActiveFocus()
-                        else { searchResults = []; searchField.text = "" }
-                    }
-                }
-
-                LogosTextField {
-                    id: searchField
-                    visible: searchActive
-                    placeholderText: "Search events..."
-                    implicitWidth: 180
-                    onTextChanged: {
-                        if (text.length >= 2 && root.ready) {
-                            _watch(backend.searchEvents(text),
-                                function(value) { searchResults = _json(value, []) },
-                                function(error) { console.warn("[scala] search failed:", error) }
-                            )
-                        } else if (text.length < 2) {
-                            searchResults = []
-                        }
-                    }
-                    Keys.onEscapePressed: {
-                        searchActive = false
-                        searchResults = []
-                        text = ""
-                    }
-                }
-
-                // ── Settings button ──────────────────────────────
-                LogosIconButton {
-                    onClicked: settingsPanel.open()
-                }
-            }
-
-            // ── Search results overlay (Logos design system) ───────────────
-            ListView {
-                id: searchResultsList
-                visible: searchActive && searchResults.length > 0
-                Layout.fillWidth: true
-                Layout.preferredHeight: Math.min(searchResults.length * 60, 300)
-                clip: true
-                model: searchResults
-                z: 10
-                delegate: LogosItemDelegate {
-                    width: searchResultsList.width
-                    height: 56
-                    highlighted: mouseArea.containsMouse
-                    onClicked: {
-                        var ev = searchResults[index]
-                        if (ev.startTime) {
-                            var d = new Date(ev.startTime)
-                            dayViewDate = d
-                            viewMode = "day"
-                        }
-                        searchActive = false
-                        searchResults = []
-                        searchField.text = ""
-                    }
-
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 16
-                        anchors.rightMargin: 16
-                        spacing: 12
-
-                        Rectangle {
-                            width: 10; height: 10; radius: 5
-                            color: modelData.calendarColor || "#89b4fa"
-                            Layout.alignment: Qt.AlignVCenter
-                        }
-
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            Layout.alignment: Qt.AlignVCenter
-
-                            LogosText {
-                                text: modelData.title || ""
-                                font.pixelSize: 14
-                                font.weight: Font.Medium
-                                color: "#cdd6f4"
-                            }
-                            LogosText {
-                                text: {
-                                    var parts = []
-                                    if (modelData.startTime) {
-                                        var d = new Date(modelData.startTime)
-                                        parts.push(d.toLocaleDateString())
-                                    }
-                                    if (modelData.calendarName)
-                                        parts.push(modelData.calendarName)
-                                    return parts.join(" \u2022 ")
-                                }
-                                font.pixelSize: 12
-                                color: "#9399b2"
-                            }
-                        }
-                    }
-                }
-            }
-
-            // ── Content: grid + optional details panel ─────────────────────
+            // header
             RowLayout {
                 Layout.fillWidth: true
-                Layout.fillHeight: true
-                spacing: 0
-
-                // Calendar grid (month view)
-                CalendarGrid {
-                    id: calendarGrid
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    visible: viewMode === "month"
-                    events: eventsForGrid()
-
-                    onNavigated: {
-                        events = eventsForGrid()
-                    }
-
-                    onDayClicked: function(day, month, year) {
-                        console.log("Day clicked:", day, month + 1, year);
-
-                        var dayEvents = []
-                        for (var i = 0; i < allEvents.length; i++) {
-                            var ev = allEvents[i]
-                            var d = new Date(ev.startTime)
-                            if (d.getDate() === day && d.getMonth() === month && d.getFullYear() === year) {
-                                dayEvents.push(ev)
-                            }
-                        }
-
-                        if (dayEvents.length > 0) {
-                            var first = dayEvents[0]
-                            var startDt = new Date(first.startTime)
-                            var endDt = new Date(first.endTime)
-                            var cal = findCalendar(first.calendarId)
-
-                            var pad = function(n) { return n < 10 ? "0" + n : "" + n }
-
-                            eventDetails.loadEvent({
-                                id: first.id,
-                                title: first.title,
-                                description: first.description || "",
-                                location: first.location || "",
-                                startDate: startDt.getFullYear() + "-" + pad(startDt.getMonth()+1) + "-" + pad(startDt.getDate()),
-                                startTime: pad(startDt.getHours()) + ":" + pad(startDt.getMinutes()),
-                                endDate: endDt.getFullYear() + "-" + pad(endDt.getMonth()+1) + "-" + pad(endDt.getDate()),
-                                endTime: pad(endDt.getHours()) + ":" + pad(endDt.getMinutes()),
-                                allDay: first.allDay || false,
-                                calendarName: cal ? cal.name : "",
-                                calendarColor: cal ? cal.color : "#89b4fa"
-                            });
-                            showEventDetails = true;
-                        } else {
-                            showEventDetails = false;
-                            eventDetails.eventId = "";
-                        }
-                    }
+                Layout.margins: Theme.spacing.medium
+                spacing: Theme.spacing.small
+                LogosButton { text: "‹"; onClicked: root.viewMonth = new Date(root.viewMonth.getFullYear(), root.viewMonth.getMonth() - 1, 1) }
+                LogosText {
+                    text: root.monthNames[root.viewMonth.getMonth()] + " " + root.viewMonth.getFullYear()
+                    color: Theme.palette.text; font.pixelSize: 20; font.weight: Theme.typography.weightMedium
+                    Layout.minimumWidth: 180
                 }
-
-                // ── Week view ─────────────────────────────────────────────
-                Item {
-                    id: weekView
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    visible: viewMode === "week"
-
-                    ColumnLayout {
-                        anchors.fill: parent
-                        spacing: 0
-
-                        // Week navigation bar (Logos design system)
-                        LogosFrame {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 44
-
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.leftMargin: 12
-                                anchors.rightMargin: 12
-
-                                LogosIconButton {
-                                    onClicked: goToPrevWeek()
-                                }
-
-                                Item { Layout.fillWidth: true }
-
-                                LogosText {
-                                    text: weekRangeLabel()
-                                    font.pixelSize: 14
-                                    font.weight: Font.Bold
-                                    color: "#cdd6f4"
-                                    horizontalAlignment: Text.AlignHCenter
-                                }
-
-                                Item { Layout.fillWidth: true }
-
-                                LogosIconButton {
-                                    onClicked: goToNextWeek()
-                                }
-                            }
-                        }
-
-                        // Day columns
-                        Row {
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-
-                            Repeater {
-                                model: 7
-                                delegate: Rectangle {
-                                    id: dayColumn
-                                    width: weekView.width / 7
-                                    height: weekView.height - 44
-                                    border.color: "#45475a"
-                                    border.width: 1
-                                    color: "#1e1e2e"
-
-                                    property date columnDate: weekDayDate(index)
-                                    property var dayEvents: eventsForDate(columnDate)
-                                    property bool isToday: {
-                                        var now = new Date()
-                                        return columnDate.getDate() === now.getDate()
-                                            && columnDate.getMonth() === now.getMonth()
-                                            && columnDate.getFullYear() === now.getFullYear()
-                                    }
-
-                                    ColumnLayout {
-                                        anchors.fill: parent
-                                        spacing: 0
-
-                                        // Day header
-                                        Rectangle {
-                                            Layout.fillWidth: true
-                                            Layout.preferredHeight: 48
-                                            color: dayColumn.isToday ? "#2a2a3c" : "#2a2a3c"
-
-                                            ColumnLayout {
-                                                anchors.centerIn: parent
-                                                spacing: 2
-
-                                                Text {
-                                                    text: ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][index]
-                                                    font.pixelSize: 11
-                                                    font.bold: true
-                                                    color: dayColumn.isToday ? "#a6e3a1" : "#89b4fa"
-                                                    Layout.alignment: Qt.AlignHCenter
-                                                }
-                                                Text {
-                                                    text: dayColumn.columnDate.getDate()
-                                                    font.pixelSize: 16
-                                                    font.bold: dayColumn.isToday
-                                                    color: dayColumn.isToday ? "#a6e3a1" : "#cdd6f4"
-                                                    Layout.alignment: Qt.AlignHCenter
-                                                }
-                                            }
-                                        }
-
-                                        // Events list
-                                        Flickable {
-                                            Layout.fillWidth: true
-                                            Layout.fillHeight: true
-                                            contentHeight: eventsColumn.height
-                                            clip: true
-
-                                            Column {
-                                                id: eventsColumn
-                                                width: parent.width
-                                                spacing: 4
-                                                topPadding: 4
-                                                leftPadding: 2
-                                                rightPadding: 2
-
-                                                Repeater {
-                                                    model: dayColumn.dayEvents
-
-                                                    delegate: Rectangle {
-                                                        width: eventsColumn.width - 4
-                                                        height: eventContent.height + 8
-                                                        radius: 4
-                                                        color: {
-                                                            var cal = findCalendar(modelData.calendarId)
-                                                            return cal ? cal.color : "#89b4fa"
-                                                        }
-                                                        opacity: eventMouse.containsMouse ? 0.85 : 1.0
-
-                                                        MouseArea {
-                                                            id: eventMouse
-                                                            anchors.fill: parent
-                                                            hoverEnabled: true
-                                                            onClicked: {
-                                                                var ev = modelData
-                                                                var startDt = new Date(ev.startTime)
-                                                                var endDt = new Date(ev.endTime)
-                                                                var cal = findCalendar(ev.calendarId)
-                                                                var pad = function(n) { return n < 10 ? "0" + n : "" + n }
-
-                                                                eventDetails.loadEvent({
-                                                                    id: ev.id,
-                                                                    title: ev.title,
-                                                                    description: ev.description || "",
-                                                                    location: ev.location || "",
-                                                                    startDate: startDt.getFullYear() + "-" + pad(startDt.getMonth()+1) + "-" + pad(startDt.getDate()),
-                                                                    startTime: pad(startDt.getHours()) + ":" + pad(startDt.getMinutes()),
-                                                                    endDate: endDt.getFullYear() + "-" + pad(endDt.getMonth()+1) + "-" + pad(endDt.getDate()),
-                                                                    endTime: pad(endDt.getHours()) + ":" + pad(endDt.getMinutes()),
-                                                                    allDay: ev.allDay || false,
-                                                                    calendarName: cal ? cal.name : "",
-                                                                    calendarColor: cal ? cal.color : "#89b4fa"
-                                                                });
-                                                                showEventDetails = true
-                                                            }
-                                                        }
-
-                                                        Column {
-                                                            id: eventContent
-                                                            anchors.left: parent.left
-                                                            anchors.right: parent.right
-                                                            anchors.top: parent.top
-                                                            anchors.margins: 4
-                                                            spacing: 1
-
-                                                            Text {
-                                                                width: parent.width
-                                                                text: modelData.allDay ? "All day" : formatTime(modelData.startTime)
-                                                                font.pixelSize: 9
-                                                                color: "white"
-                                                                opacity: 0.85
-                                                                elide: Text.ElideRight
-                                                            }
-                                                            Text {
-                                                                width: parent.width
-                                                                text: modelData.title || "Untitled"
-                                                                font.pixelSize: 11
-                                                                font.bold: true
-                                                                color: "white"
-                                                                elide: Text.ElideRight
-                                                                wrapMode: Text.Wrap
-                                                                maximumLineCount: 2
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // ── Day view ─────────────────────────────────────────────
-                Item {
-                    id: dayView
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    visible: viewMode === "day"
-
-                    ColumnLayout {
-                        anchors.fill: parent
-                        spacing: 0
-
-                        // Day navigation bar (Logos design system)
-                        LogosFrame {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 44
-
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.leftMargin: 12
-                                anchors.rightMargin: 12
-
-                                LogosIconButton {
-                                    onClicked: goToPrevDay()
-                                }
-
-                                LogosButton {
-                                    text: "Today"
-                                    onClicked: goToToday()
-                                    enabled: !isDayViewToday()
-                                }
-
-                                Item { Layout.fillWidth: true }
-
-                                LogosText {
-                                    text: dayViewLabel()
-                                    font.pixelSize: 14
-                                    font.weight: Font.Bold
-                                    color: "#cdd6f4"
-                                    horizontalAlignment: Text.AlignHCenter
-                                }
-
-                                Item { Layout.fillWidth: true }
-
-                                LogosIconButton {
-                                    onClicked: goToNextDay()
-                                }
-                            }
-                        }
-
-                        // Time grid
-                        Flickable {
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            contentHeight: timeGridColumn.height
-                            clip: true
-                            boundsBehavior: Flickable.StopAtBounds
-
-                            Column {
-                                id: timeGridColumn
-                                width: parent.width
-
-                                Repeater {
-                                    model: 24  // hours 0–23
-                                    delegate: Rectangle {
-                                        id: hourRow
-                                        width: timeGridColumn.width
-                                        height: 60
-                                        color: "#1e1e2e"
-                                        border.color: "#33334a"
-                                        border.width: 1
-
-                                        property int hour: index
-                                        property var hourEvents: {
-                                            var result = []
-                                            var dayEvts = eventsForDayView()
-                                            for (var i = 0; i < dayEvts.length; i++) {
-                                                var ev = dayEvts[i]
-                                                var evStart = new Date(ev.startTime)
-                                                if (evStart.getHours() === hour) {
-                                                    result.push(ev)
-                                                }
-                                            }
-                                            return result
-                                        }
-
-                                        RowLayout {
-                                            anchors.fill: parent
-                                            spacing: 0
-
-                                            // Hour label
-                                            Rectangle {
-                                                Layout.preferredWidth: 60
-                                                Layout.fillHeight: true
-                                                color: "transparent"
-
-                                                Text {
-                                                    anchors.top: parent.top
-                                                    anchors.topMargin: 4
-                                                    anchors.right: parent.right
-                                                    anchors.rightMargin: 8
-                                                    text: (hour < 10 ? "0" : "") + hour + ":00"
-                                                    font.pixelSize: 11
-                                                    color: "#9399b2"
-                                                }
-                                            }
-
-                                            // Separator
-                                            Rectangle {
-                                                Layout.preferredWidth: 1
-                                                Layout.fillHeight: true
-                                                color: "#45475a"
-                                            }
-
-                                            // Event area
-                                            Item {
-                                                Layout.fillWidth: true
-                                                Layout.fillHeight: true
-
-                                                // Clickable empty area
-                                                MouseArea {
-                                                    anchors.fill: parent
-                                                    onClicked: {
-                                                        var pad = function(n) { return n < 10 ? "0" + n : "" + n }
-                                                        var d = dayViewDate
-                                                        var dateStr = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate())
-                                                        var timeStr = pad(hourRow.hour) + ":00"
-                                                        var endTimeStr = pad(hourRow.hour + 1 < 24 ? hourRow.hour + 1 : 23) + ":00"
-                                                        eventModal.clear()
-                                                        eventModal.calendars = calendarList
-                                                        eventModal.startDate = dateStr
-                                                        eventModal.startTime = timeStr
-                                                        eventModal.endDate = dateStr
-                                                        eventModal.endTime = endTimeStr
-                                                        eventModal.open()
-                                                    }
-                                                }
-
-                                                // Events as colored blocks
-                                                Column {
-                                                    anchors.fill: parent
-                                                    anchors.margins: 2
-                                                    spacing: 2
-
-                                                    Repeater {
-                                                        model: hourRow.hourEvents
-
-                                                        delegate: Rectangle {
-                                                            width: parent.width
-                                                            height: {
-                                                                var ev = modelData
-                                                                var startMs = ev.startTime
-                                                                var endMs = ev.endTime
-                                                                var durationMin = (endMs - startMs) / 60000
-                                                                return Math.max(24, Math.min(durationMin, 60))
-                                                            }
-                                                            radius: 4
-                                                            color: {
-                                                                var cal = findCalendar(modelData.calendarId)
-                                                                return cal ? cal.color : "#89b4fa"
-                                                            }
-                                                            opacity: evtMouse.containsMouse ? 0.85 : 1.0
-
-                                                            MouseArea {
-                                                                id: evtMouse
-                                                                anchors.fill: parent
-                                                                hoverEnabled: true
-                                                                onClicked: {
-                                                                    var ev = modelData
-                                                                    var startDt = new Date(ev.startTime)
-                                                                    var endDt = new Date(ev.endTime)
-                                                                    var cal = findCalendar(ev.calendarId)
-                                                                    var pad = function(n) { return n < 10 ? "0" + n : "" + n }
-
-                                                                    eventDetails.loadEvent({
-                                                                        id: ev.id,
-                                                                        title: ev.title,
-                                                                        description: ev.description || "",
-                                                                        location: ev.location || "",
-                                                                        startDate: startDt.getFullYear() + "-" + pad(startDt.getMonth()+1) + "-" + pad(startDt.getDate()),
-                                                                        startTime: pad(startDt.getHours()) + ":" + pad(startDt.getMinutes()),
-                                                                        endDate: endDt.getFullYear() + "-" + pad(endDt.getMonth()+1) + "-" + pad(endDt.getDate()),
-                                                                        endTime: pad(endDt.getHours()) + ":" + pad(endDt.getMinutes()),
-                                                                        allDay: ev.allDay || false,
-                                                                        calendarName: cal ? cal.name : "",
-                                                                        calendarColor: cal ? cal.color : "#89b4fa"
-                                                                    });
-                                                                    showEventDetails = true
-                                                                }
-                                                            }
-
-                                                            RowLayout {
-                                                                anchors.fill: parent
-                                                                anchors.margins: 4
-                                                                spacing: 6
-
-                                                                Text {
-                                                                    text: formatTime(modelData.startTime) + "–" + formatTime(modelData.endTime)
-                                                                    font.pixelSize: 10
-                                                                    color: "white"
-                                                                    opacity: 0.9
-                                                                }
-                                                                Text {
-                                                                    Layout.fillWidth: true
-                                                                    text: modelData.title || "Untitled"
-                                                                    font.pixelSize: 12
-                                                                    font.bold: true
-                                                                    color: "white"
-                                                                    elide: Text.ElideRight
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Event details panel (right side)
-                EventDetails {
-                    id: eventDetails
-                    Layout.preferredWidth: showEventDetails ? 280 : 0
-                    Layout.fillHeight: true
-                    visible: showEventDetails
-                    clip: true
-
-                    Behavior on Layout.preferredWidth {
-                        NumberAnimation { duration: 200; easing.type: Easing.OutCubic }
-                    }
-
-                    onEditRequested: function(evId) {
-                        if (!root.ready) return
-                        _watch(backend.getEvent(evId),
-                            function(value) {
-                                _loadEventForEdit(_json(value, {}))
-                            },
-                            function(error) { console.warn("[scala] getEvent failed:", error) }
-                        )
-                    }
-
-                    function _loadEventForEdit(ev) {
-                        var startDt = new Date(ev.startTime)
-                        var endDt = new Date(ev.endTime)
-                        var pad = function(n) { return n < 10 ? "0" + n : "" + n }
-
-                        eventModal.loadEvent({
-                            id: ev.id,
-                            title: ev.title,
-                            description: ev.description || "",
-                            location: ev.location || "",
-                            startDate: startDt.getFullYear() + "-" + pad(startDt.getMonth()+1) + "-" + pad(startDt.getDate()),
-                            startTime: pad(startDt.getHours()) + ":" + pad(startDt.getMinutes()),
-                            endDate: endDt.getFullYear() + "-" + pad(endDt.getMonth()+1) + "-" + pad(endDt.getDate()),
-                            endTime: pad(endDt.getHours()) + ":" + pad(endDt.getMinutes()),
-                            allDay: ev.allDay || false,
-                            calendarId: ev.calendarId || ""
-                        });
-                        eventModal.calendars = calendarList;
-                        eventModal.open();
-                    }
-
-                    onDeleteConfirmed: function(evId) {
-                        if (!root.ready) return
-                        _watch(backend.deleteEvent(evId),
-                            function(value) {
-                                refreshEvents()
-                                calendarGrid.events = eventsForGrid()
-                                showEventDetails = false
-                                eventDetails.eventId = ""
-                            },
-                            function(error) { console.warn("[scala] deleteEvent failed:", error) }
-                        )
-
-                    onCloseRequested: {
-                        showEventDetails = false;
-                        eventDetails.eventId = "";
-                    }
-                }
-            }
-        }
-    }
-
-    // ── Event modal (overlay) ──────────────────────────────────────────────
-    EventModal {
-        id: eventModal
-
-        onSaveClicked: function(eventData) {
-            var evJson = {
-                title: eventData.title,
-                description: eventData.description,
-                location: eventData.location,
-                startTime: msFromDateTime(eventData.startDate, eventData.startTime, true),
-                endTime: msFromDateTime(eventData.endDate, eventData.endTime, true),
-                allDay: eventData.allDay,
-                reminderMinutes: eventData.reminderMinutes !== undefined ? eventData.reminderMinutes : -1
+                LogosButton { text: "›"; onClicked: root.viewMonth = new Date(root.viewMonth.getFullYear(), root.viewMonth.getMonth() + 1, 1) }
+                LogosButton { text: "Today"; onClicked: { var n = new Date(); root.viewMonth = n; root.selectedDay = n } }
+                Item { Layout.fillWidth: true }
+                LogosText { text: root.ready ? (root.calendars.length + " calendar(s)") : "connecting…"; color: Theme.palette.textTertiary; font.pixelSize: 12 }
+                LogosButton { text: "+ New event"; onClicked: root.openNewEvent() }
             }
 
-            if (eventData.id && eventData.id !== "") {
-                evJson.id = eventData.id
-                evJson.calendarId = eventData.calendarId
-                if (!root.ready) return
-                _watch(backend.updateEvent(JSON.stringify(evJson)),
-                    function(value) { _onEventSaved() },
-                    function(error) { console.warn("[scala] updateEvent failed:", error) }
-                )
-            } else {
-                var calId = eventData.calendarId || selectedCalendarId
-                    || (calendarList.length > 0 ? calendarList[0].id : "")
-                evJson.calendarId = calId
-                if (!root.ready) return
-                _watch(backend.createEvent(calId, JSON.stringify(evJson)),
-                    function(value) { _onEventSaved() },
-                    function(error) { console.warn("[scala] createEvent failed:", error) }
-                )
-            }
-        }
-
-        // Helper: called after successful event save (create or update)
-        function _onEventSaved() {
-            refreshEvents()
-            calendarGrid.events = eventsForGrid()
-        }
-
-        onCancelClicked: {
-            console.log("Event creation cancelled");
-        }
-    }
-
-    // ── New Calendar dialog ────────────────────────────────────────────────
-    Popup {
-        id: newCalendarDialog
-        modal: true
-        focus: true
-        anchors.centerIn: parent
-        width: 340
-        height: 280
-        padding: 20
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-
-        property string selectedColor: presetColors[0]
-
-        background: Rectangle { radius: 12; color: "white"; border.color: "#45475a" }
-
-        onOpened: {
-            newCalNameField.text = ""
-            selectedColor = presetColors[0]
-            newCalNameField.forceActiveFocus()
-        }
-
-        ColumnLayout {
-            anchors.fill: parent
-            spacing: 12
-
-            Text { text: "New Calendar"; font.pixelSize: 18; font.bold: true; color: "#cdd6f4" }
-            Rectangle { Layout.fillWidth: true; height: 1; color: "#45475a" }
-
-            Text { text: "Name"; font.pixelSize: 13; color: "#9399b2" }
-            TextField {
-                id: newCalNameField
-                Layout.fillWidth: true
-                placeholderText: "Calendar name"
-                font.pixelSize: 14
-                background: Rectangle { radius: 4; color: "#33334a"; border.color: "#45475a" }
-            }
-
-            Text { text: "Color"; font.pixelSize: 13; color: "#9399b2" }
-            Row {
-                spacing: 8
+            // weekday header
+            RowLayout {
+                Layout.fillWidth: true; Layout.leftMargin: Theme.spacing.medium; Layout.rightMargin: Theme.spacing.medium; spacing: 2
                 Repeater {
-                    model: presetColors
+                    model: root.weekDays
+                    LogosText { text: modelData; color: Theme.palette.textTertiary; font.pixelSize: 11; horizontalAlignment: Text.AlignHCenter; Layout.fillWidth: true }
+                }
+            }
+
+            // month grid
+            GridLayout {
+                id: grid
+                Layout.fillWidth: true
+                Layout.preferredHeight: 300
+                Layout.leftMargin: Theme.spacing.medium; Layout.rightMargin: Theme.spacing.medium; Layout.topMargin: 4
+                columns: 7; rowSpacing: 2; columnSpacing: 2
+
+                Repeater {
+                    model: 42
                     delegate: Rectangle {
-                        width: 28; height: 28; radius: 14
-                        color: modelData
-                        border.width: newCalendarDialog.selectedColor === modelData ? 3 : 0
-                        border.color: "#cdd6f4"
-                        MouseArea {
-                            anchors.fill: parent
-                            onClicked: newCalendarDialog.selectedColor = modelData
+                        id: cell
+                        Layout.fillWidth: true; Layout.fillHeight: true
+                        radius: Theme.spacing.radiusSmall
+                        // first cell = Monday on/before the 1st of viewMonth
+                        property date cellDate: {
+                            var first = new Date(root.viewMonth.getFullYear(), root.viewMonth.getMonth(), 1)
+                            var offset = (first.getDay() + 6) % 7
+                            return new Date(first.getFullYear(), first.getMonth(), 1 - offset + index)
+                        }
+                        property bool inMonth: cellDate.getMonth() === root.viewMonth.getMonth()
+                        property bool isToday: root.sameDay(cellDate, new Date())
+                        property bool isSel: root.sameDay(cellDate, root.selectedDay)
+                        color: isSel ? Theme.palette.backgroundSecondary : Theme.palette.backgroundInset
+                        border.width: isSel ? 1 : 0
+                        border.color: Theme.palette.primary
+
+                        Column {
+                            anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 5; spacing: 3
+                            LogosText {
+                                text: cell.cellDate.getDate()
+                                color: cell.isToday ? Theme.palette.primary : (cell.inMonth ? Theme.palette.text : Theme.palette.textTertiary)
+                                font.pixelSize: 13
+                                font.weight: cell.isToday ? Theme.typography.weightMedium : Font.Normal
+                            }
+                            Row {
+                                spacing: 2
+                                Repeater {
+                                    model: root.dotsOnDay(cell.cellDate)
+                                    Rectangle { width: 6; height: 6; radius: 3; color: modelData }
+                                }
+                            }
+                        }
+                        MouseArea { anchors.fill: parent; onClicked: root.selectedDay = cell.cellDate }
+                    }
+                }
+            }
+
+            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.palette.borderHairline; Layout.topMargin: Theme.spacing.small }
+
+            // day detail
+            LogosText {
+                text: Qt.formatDate(root.selectedDay, "dddd, MMMM d")
+                color: Theme.palette.text; font.pixelSize: 16; font.weight: Theme.typography.weightMedium
+                Layout.margins: Theme.spacing.medium
+            }
+            ListView {
+                Layout.fillWidth: true; Layout.fillHeight: true; clip: true
+                Layout.leftMargin: Theme.spacing.medium; Layout.rightMargin: Theme.spacing.medium
+                id: dayList
+                model: root.eventsOnDay(root.selectedDay)
+                spacing: Theme.spacing.small
+                delegate: Rectangle {
+                    width: ListView.view.width; height: 56; radius: Theme.spacing.radiusMedium
+                    color: Theme.palette.backgroundInset
+                    RowLayout {
+                        anchors.fill: parent; anchors.leftMargin: Theme.spacing.medium; anchors.rightMargin: Theme.spacing.medium; spacing: Theme.spacing.medium
+                        Rectangle { width: 6; Layout.fillHeight: true; Layout.topMargin: 10; Layout.bottomMargin: 10; radius: 3; color: root.calColor(modelData.calendarId) }
+                        ColumnLayout {
+                            Layout.fillWidth: true; spacing: 2
+                            LogosText { text: modelData.title || "(untitled)"; color: Theme.palette.text; font.pixelSize: 15; font.weight: Theme.typography.weightMedium; elide: Text.ElideRight; Layout.fillWidth: true }
+                            LogosText {
+                                text: root.fmtTime(modelData.startTime) + " – " + root.fmtTime(modelData.endTime)
+                                      + "   " + root.calName(modelData.calendarId)
+                                color: Theme.palette.textSecondary; font.pixelSize: 12; elide: Text.ElideRight; Layout.fillWidth: true
+                            }
                         }
                     }
+                    MouseArea { anchors.fill: parent; onClicked: root.openEditEvent(modelData) }
+                }
+                footer: Item { width: 1; height: Theme.spacing.large }
+                Label {
+                    anchors.centerIn: parent
+                    visible: dayList.count === 0
+                    text: "No events. Click “+ New event”."
+                    color: Theme.palette.textTertiary; font.pixelSize: 13
+                }
+            }
+        }
+    }
+
+    // ── event editor popup ─────────────────────────────────────────────────
+    property var editingEvent: null       // null = creating
+    property string editCalId: ""
+    function openNewEvent() {
+        var w = writableCalendars()
+        if (w.length === 0) { newCalPopup.open(); return }
+        editingEvent = null
+        editCalId = w[0].id
+        var start = new Date(selectedDay); start.setHours(9, 0, 0, 0)
+        var end = new Date(selectedDay); end.setHours(10, 0, 0, 0)
+        evTitle.text = ""; evDate.text = fmtDateInput(start)
+        evStart.text = fmtTimeInput(start); evEnd.text = fmtTimeInput(end); evNotes.text = ""
+        eventPopup.open()
+    }
+    function openEditEvent(ev) {
+        editingEvent = ev
+        editCalId = ev.calendarId
+        var s = new Date(ev.startTime), e = new Date(ev.endTime)
+        evTitle.text = ev.title || ""; evDate.text = fmtDateInput(s)
+        evStart.text = fmtTimeInput(s); evEnd.text = fmtTimeInput(e); evNotes.text = ev.description || ""
+        eventPopup.open()
+    }
+    function saveEvent() {
+        var s = parseDateTime(evDate.text, evStart.text)
+        var e = parseDateTime(evDate.text, evEnd.text)
+        if (e.getTime() <= s.getTime()) e = new Date(s.getTime() + 3600000)
+        if (editingEvent) {
+            var up = editingEvent
+            up.title = evTitle.text.trim(); up.startTime = s.getTime(); up.endTime = e.getTime(); up.description = evNotes.text.trim()
+            core("updateEvent", [JSON.stringify(up)])
+        } else {
+            var nv = { title: evTitle.text.trim(), startTime: s.getTime(), endTime: e.getTime(), allDay: false, description: evNotes.text.trim() }
+            core("createEvent", [editCalId, JSON.stringify(nv)])
+        }
+        eventPopup.close(); refresh()
+    }
+    function deleteEvent() {
+        if (editingEvent) core("deleteEvent", [editingEvent.id])
+        eventPopup.close(); refresh()
+    }
+
+
+    Popup {
+        id: eventPopup
+        anchors.centerIn: Overlay.overlay
+        width: 420; modal: true; padding: Theme.spacing.large
+        background: Rectangle { radius: Theme.spacing.radiusMedium; color: Theme.palette.backgroundElevated; border.width: 1; border.color: Theme.palette.borderHairline }
+        ColumnLayout {
+            anchors.fill: parent; spacing: Theme.spacing.small
+            LogosText { text: root.editingEvent ? "Edit event" : "New event"; color: Theme.palette.text; font.pixelSize: 18; font.weight: Theme.typography.weightMedium }
+
+            LogosText { text: "Calendar"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
+            Flow {
+                Layout.fillWidth: true; spacing: 6
+                Repeater {
+                    model: root.writableCalendars()
+                    delegate: Rectangle {
+                        height: 30; radius: 15; width: chipRow.width + 20
+                        color: root.editCalId === modelData.id ? Theme.palette.backgroundSecondary : Theme.palette.background
+                        border.width: 1; border.color: root.editCalId === modelData.id ? Theme.palette.primary : Theme.palette.borderHairline
+                        Row { id: chipRow; anchors.centerIn: parent; spacing: 6
+                            Rectangle { width: 10; height: 10; radius: 5; color: modelData.color || Theme.palette.primary; anchors.verticalCenter: parent.verticalCenter }
+                            LogosText { text: modelData.name || "(cal)"; color: Theme.palette.text; font.pixelSize: 13 }
+                        }
+                        MouseArea { anchors.fill: parent; enabled: !root.editingEvent; onClicked: root.editCalId = modelData.id }
+                        opacity: (root.editingEvent && root.editCalId !== modelData.id) ? 0.4 : 1
+                    }
                 }
             }
 
-            Item { Layout.fillHeight: true }
+            LogosText { text: "Title"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
+            Field { id: evTitle; Layout.fillWidth: true; placeholderText: "Event title" }
 
             RowLayout {
-                spacing: 8
+                Layout.fillWidth: true; spacing: Theme.spacing.small
+                ColumnLayout { Layout.fillWidth: true; LogosText { text: "Date"; color: Theme.palette.textTertiary; font.pixelSize: 11 } Field { id: evDate; Layout.fillWidth: true; placeholderText: "YYYY-MM-DD" } }
+                ColumnLayout { LogosText { text: "Start"; color: Theme.palette.textTertiary; font.pixelSize: 11 } Field { id: evStart; Layout.preferredWidth: 80; placeholderText: "HH:MM" } }
+                ColumnLayout { LogosText { text: "End"; color: Theme.palette.textTertiary; font.pixelSize: 11 } Field { id: evEnd; Layout.preferredWidth: 80; placeholderText: "HH:MM" } }
+            }
+
+            LogosText { text: "Notes"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
+            Field { id: evNotes; Layout.fillWidth: true; placeholderText: "Optional" }
+
+            RowLayout {
+                Layout.fillWidth: true; Layout.topMargin: Theme.spacing.small; spacing: Theme.spacing.small
+                LogosButton { visible: root.editingEvent !== null; text: "Delete"; onClicked: root.deleteEvent() }
                 Item { Layout.fillWidth: true }
-                Button {
-                    text: "Cancel"
-                    onClicked: newCalendarDialog.close()
-                    background: Rectangle { radius: 6; color: parent.hovered ? "#45475a" : "#33334a" }
-                    contentItem: Text {
-                        text: parent.text; font.pixelSize: 14; color: "#9399b2"
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
+                LogosButton { text: "Cancel"; onClicked: eventPopup.close() }
+                LogosButton { text: root.editingEvent ? "Save" : "Create"; enabled: evTitle.text.trim().length > 0; onClicked: root.saveEvent() }
+            }
+        }
+    }
+
+    // ── new-calendar popup ───────────────────────────────────────────────────
+    property string newCalColor: "#89b4fa"
+    readonly property var presetColors: ["#a6e3a1","#89b4fa","#f9e2af","#f38ba8","#cba6f7","#94e2d5","#fab387","#74c7ec"]
+    Popup {
+        id: newCalPopup
+        anchors.centerIn: Overlay.overlay
+        width: 360; modal: true; padding: Theme.spacing.large
+        background: Rectangle { radius: Theme.spacing.radiusMedium; color: Theme.palette.backgroundElevated; border.width: 1; border.color: Theme.palette.borderHairline }
+        onOpened: { newCalName.text = ""; root.newCalColor = root.presetColors[1] }
+        ColumnLayout {
+            anchors.fill: parent; spacing: Theme.spacing.small
+            LogosText { text: "New calendar"; color: Theme.palette.text; font.pixelSize: 18; font.weight: Theme.typography.weightMedium }
+            Field { id: newCalName; Layout.fillWidth: true; placeholderText: "Calendar name" }
+            Flow {
+                Layout.fillWidth: true; spacing: 8
+                Repeater {
+                    model: root.presetColors
+                    delegate: Rectangle {
+                        width: 28; height: 28; radius: 14; color: modelData
+                        border.width: root.newCalColor === modelData ? 3 : 0; border.color: Theme.palette.text
+                        MouseArea { anchors.fill: parent; onClicked: root.newCalColor = modelData }
                     }
                 }
-                Button {
-                    text: "Create"
-                    enabled: newCalNameField.text.trim().length > 0
-                    onClicked: {
-                        if (!root.ready) return
-                        var name = newCalNameField.text.trim()
-                        var color = newCalendarDialog.selectedColor
-                        _watch(backend.createCalendar(name, color),
-                            function(value) {
-                                refreshCalendars()
-                                refreshEvents()
-                                calendarGrid.events = eventsForGrid()
-                                newCalendarDialog.close()
-                            },
-                            function(error) { console.warn("[scala] createCalendar failed:", error) }
-                        )
-                    }
-                    background: Rectangle {
-                        radius: 6
-                        color: parent.enabled
-                            ? (parent.hovered ? Qt.lighter("#a6e3a1", 1.1) : "#a6e3a1")
-                            : "#9399b2"
-                    }
-                    contentItem: Text {
-                        text: parent.text; font.pixelSize: 14; font.bold: true; color: "#1e1e2e"
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
+            }
+            RowLayout {
+                Layout.fillWidth: true; Layout.topMargin: Theme.spacing.small
+                Item { Layout.fillWidth: true }
+                LogosButton { text: "Cancel"; onClicked: newCalPopup.close() }
+                LogosButton {
+                    text: "Create"; enabled: newCalName.text.trim().length > 0
+                    onClicked: { root.core("createCalendar", [newCalName.text.trim(), root.newCalColor]); newCalPopup.close(); root.refresh() }
                 }
             }
         }
     }
 
-    // ── Share dialog ───────────────────────────────────────────────────────
-    ShareDialog {
-        id: shareDialog
-
-        onJoinRequested: function(link) {
-            if (!root.ready) return
-            _watch(backend.handleShareLink(link),
-                function(value) {
-                    if (value) {
-                        refreshCalendars()
-                        refreshEvents()
-                        calendarGrid.events = eventsForGrid()
-                        shareDialog.close()
-                    }
-                },
-                function(error) { console.warn("[scala] handleShareLink failed:", error) }
-            )
-    }
-    }
-
-    // ── Settings panel ───────────────────────────────────────────────────
-    SettingsPanel {
-        id: settingsPanel
-
-        onSettingsSaved: {
-            // Apply default view setting
-            _loadSettings()
+    // ── join popup ─────────────────────────────────────────────────────────
+    Popup {
+        id: joinPopup
+        anchors.centerIn: Overlay.overlay
+        width: 420; modal: true; padding: Theme.spacing.large
+        background: Rectangle { radius: Theme.spacing.radiusMedium; color: Theme.palette.backgroundElevated; border.width: 1; border.color: Theme.palette.borderHairline }
+        onOpened: joinLink.text = ""
+        ColumnLayout {
+            anchors.fill: parent; spacing: Theme.spacing.small
+            LogosText { text: "Join a shared calendar"; color: Theme.palette.text; font.pixelSize: 18; font.weight: Theme.typography.weightMedium }
+            LogosText { text: "Paste the scala:// invite link"; color: Theme.palette.textTertiary; font.pixelSize: 12 }
+            Field { id: joinLink; Layout.fillWidth: true; placeholderText: "scala://join?..." }
+            RowLayout {
+                Layout.fillWidth: true; Layout.topMargin: Theme.spacing.small
+                Item { Layout.fillWidth: true }
+                LogosButton { text: "Cancel"; onClicked: joinPopup.close() }
+                LogosButton {
+                    text: "Join"; enabled: joinLink.text.trim().length > 0
+                    onClicked: { root.core("handleShareLink", [joinLink.text.trim()]); joinPopup.close(); root.refresh() }
+                }
+            }
         }
     }
-}
+
+    // ── share popup ──────────────────────────────────────────────────────────
+    function openShare(cal) {
+        var link = core("generateShareLink", [cal.id])
+        link = root.j(link, link)   // unwrap if the bridge quoted it
+        shareLink.text = (typeof link === "string" ? link : "")
+        shareTitle.text = cal.name || "calendar"
+        sharePopup.open()
+    }
+    Popup {
+        id: sharePopup
+        anchors.centerIn: Overlay.overlay
+        width: 460; modal: true; padding: Theme.spacing.large
+        background: Rectangle { radius: Theme.spacing.radiusMedium; color: Theme.palette.backgroundElevated; border.width: 1; border.color: Theme.palette.borderHairline }
+        ColumnLayout {
+            anchors.fill: parent; spacing: Theme.spacing.small
+            LogosText { id: shareTitle; text: ""; color: Theme.palette.text; font.pixelSize: 18; font.weight: Theme.typography.weightMedium }
+            LogosText { text: "Share this link so another device can join and sync:"; color: Theme.palette.textTertiary; font.pixelSize: 12 }
+            Field { id: shareLink; Layout.fillWidth: true; readOnly: true; selectByMouse: true }
+            RowLayout {
+                Layout.fillWidth: true; Layout.topMargin: Theme.spacing.small
+                Item { Layout.fillWidth: true }
+                LogosButton { text: "Copy"; onClicked: { shareLink.selectAll(); shareLink.copy() } }
+                LogosButton { text: "Close"; onClicked: sharePopup.close() }
+            }
+        }
+    }
 }
