@@ -1,0 +1,13 @@
+{
+  "calId": "cal1",
+  "log": [
+    {"v":1,"id":"m1","type":"cal.meta","hlc":{"wall":100,"ctr":0,"dev":"A"},"dev":"A","payload":{"name":"Team","color":"#111111"}},
+    {"v":1,"id":"m2","type":"cal.meta","hlc":{"wall":200,"ctr":0,"dev":"B"},"dev":"B","payload":{"name":"Team Sync","color":"#222222"}},
+    {"v":1,"id":"e1","type":"event.put","hlc":{"wall":150,"ctr":0,"dev":"A"},"dev":"A","payload":{"id":"evA","title":"Standup","startTime":1000,"endTime":2000}},
+    {"v":1,"id":"e2","type":"event.put","hlc":{"wall":300,"ctr":0,"dev":"B"},"dev":"B","payload":{"id":"evA","title":"Standup (moved)","startTime":1500,"endTime":2500,"location":"Room 4"}},
+    {"v":1,"id":"e3","type":"event.put","hlc":{"wall":120,"ctr":0,"dev":"A"},"dev":"A","payload":{"id":"evB","title":"Lunch","startTime":5000,"endTime":6000}},
+    {"v":1,"id":"d1","type":"event.del","hlc":{"wall":400,"ctr":0,"dev":"B"},"dev":"B","payload":{"id":"evB"}},
+    {"v":1,"id":"e4","type":"event.put","hlc":{"wall":500,"ctr":0,"dev":"A"},"dev":"A","payload":{"id":"evB","title":"Lunch again (should stay deleted)","startTime":7000,"endTime":8000}},
+    {"v":1,"id":"e5","type":"event.put","hlc":{"wall":250,"ctr":3,"dev":"C"},"dev":"C","payload":{"id":"evC","title":"Review","startTime":9000,"endTime":9600,"description":"quarterly"}}
+  ]
+}

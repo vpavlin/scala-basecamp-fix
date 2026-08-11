@@ -6,7 +6,8 @@
     "start": "expo start",
     "android": "expo run:android",
     "prebuild": "expo prebuild --platform android",
-    "tsc": "tsc --noEmit"
+    "tsc": "tsc --noEmit",
+    "test": "bash test/parity.sh"
   },
   "dependencies": {
     "@noble/ciphers": "^2.2.0",

@@ -1,35 +1,19 @@
-// Scala mobile sync — the wire the desktop core (src/calendar_sync.cpp) speaks,
-// carried over the shared logos-transport (SDS Reliable Channels). Drops onto
-// the same per-calendar channel the desktop already listens on.
+// Scala mobile sync — the CRDT event wire the desktop core (src/calendar_sync.cpp
+// sendEvent / handleReceive) speaks, carried over the shared logos-transport (SDS
+// Reliable Channels). Drops onto the same per-calendar channel the desktop listens
+// on.
 //
 // Wire (must match the desktop byte-for-byte):
-//   • topic    = "/scala/1/<calendarId>/json"  (channelId == contentTopic)
-//   • message  = SyncMessage JSON (see fields below), UTF-8 bytes
-//   • sealed   = AES-256-GCM(message)  ->  nonce||tag||ciphertext  (crypto.ts)
+//   • topic     = "/scala/1/<calendarId>/json"   (channelId == contentTopic)
+//   • plaintext = ONE event's JSON (engine.eventToJson → JSON.stringify):
+//                 {v,id,type,hlc:{wall,ctr,dev},dev,payload}   — NOT a SyncMessage
+//   • sealed    = AES-256-GCM(plaintext) -> nonce||tag||ciphertext  (crypto.ts)
 //   • transport double-base64s the sealed bytes for the channel (publishSealed);
 //     on receive it hands candidate byte-arrays, we open() each with the
 //     calendar's key and take the first that authenticates.
 import * as transport from "./logos-transport";
 import { seal, open } from "./crypto";
 import { utf8Bytes, utf8Decode } from "./utf8";
-
-// ── SyncMessage — mirror of SyncMessage in calendar_sync.cpp ─────────────────
-// type is one of the string forms desktop's typeToString emits. payload is the
-// serialized event/calendar JSON the app applies. signature = HMAC-SHA256(payload,
-// encryptionKey) hex (desktop SyncMessage::sign) — optional, verified if present.
-export type SyncType =
-  | "CreateEvent" | "UpdateEvent" | "DeleteEvent"
-  | "CreateCalendar" | "UpdateCalendar" | "DeleteCalendar"
-  | "FullSync";
-
-export interface SyncMessage {
-  type: SyncType;
-  calendarId: string;
-  payload: string;   // JSON string of the event/calendar
-  senderId: string;  // our stable device identity
-  timestamp: number; // ms
-  signature?: string;
-}
 
 export function topicForCalendar(calendarId: string): string {
   return `/scala/1/${calendarId}/json`;
@@ -43,11 +27,13 @@ interface Route {
 }
 let routes: Route[] = [];
 let deviceId = "scala-default";
-let onSync: ((calendarId: string, msg: SyncMessage) => void) | null = null;
+// Handler the app registers to merge one inbound event (raw JSON string) into the
+// calendar's log — mirrors the desktop OnEventReceived / applyIncoming path.
+let onEvent: ((calendarId: string, eventJson: string) => void) | null = null;
 
-/** Register the callback the app uses to apply an inbound SyncMessage. */
-export function setSyncHandler(cb: (calendarId: string, msg: SyncMessage) => void) {
-  onSync = cb;
+/** Register the callback the app uses to apply an inbound event. */
+export function setEventHandler(cb: (calendarId: string, eventJson: string) => void) {
+  onEvent = cb;
 }
 
 export function deliveryAvailable(): boolean {
@@ -63,12 +49,8 @@ function adapterReceive(topic: string, candidates: Uint8Array[]): boolean {
   for (const cand of candidates) {
     const plain = open(route.encryptionKey, cand);
     if (!plain) continue; // wrong key / not ours / other candidate
-    try {
-      const msg = JSON.parse(utf8Decode(plain)) as SyncMessage;
-      if (msg && msg.type) onSync?.(route.calendarId, msg);
-    } catch {
-      /* opened but not a SyncMessage */
-    }
+    // Hand the raw decrypted event JSON straight to the CRDT merge path.
+    onEvent?.(route.calendarId, utf8Decode(plain));
     return true;
   }
   return false;
@@ -110,22 +92,12 @@ export async function joinCalendar(calendarId: string, encryptionKey: string): P
   if (transport.getCtx()) await transport.join([topicForCalendar(calendarId)]);
 }
 
-/** Publish one SyncMessage on a calendar's channel (sealed with its key). */
-export async function sendMessage(
-  calendarId: string,
-  type: SyncType,
-  payload: string,
-): Promise<void> {
+/** Publish one CRDT event on a calendar's channel (sealed with its key). The
+ *  argument is the event's JSON string (engine.eventToJson → JSON.stringify). */
+export async function sendEvent(calendarId: string, eventJson: string): Promise<void> {
   const route = routes.find((r) => r.calendarId === calendarId);
   if (!route) return; // not a shared calendar / no key on this device
-  const msg: SyncMessage = {
-    type,
-    calendarId,
-    payload,
-    senderId: deviceId,
-    timestamp: Date.now(),
-  };
-  const sealed = seal(route.encryptionKey, utf8Bytes(JSON.stringify(msg)));
+  const sealed = seal(route.encryptionKey, utf8Bytes(eventJson));
   await transport.publishSealed(route.topic, sealed);
 }
 
