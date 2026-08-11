@@ -244,10 +244,21 @@ void CalendarSync::handleReceive(const std::string &topic, const std::string &se
     // Find which calendar this topic belongs to
     for (auto &[calendarId, _] : m_activeTopics) {
         if (topicForCalendar(calendarId) == topic) {
-            // Open the sealed bytes
+            // Open the sealed bytes. The transport peeled ONE base64 layer ("app peels
+            // the rest"). A desktop peer single-base64s its payload, so one peel yields
+            // the sealed bytes directly. But MOBILE double-base64s (b64(b64(sealed)) —
+            // the shared logos-transport-pkg convention proven with qaku/kym), so after
+            // one peel we still hold a base64 TEXT layer. Try to open as-is first
+            // (desktop→desktop), then peel one more layer and retry (mobile→desktop) —
+            // exactly qaku_core::ingestPayload (double-decode then single). Without this
+            // second attempt every phone message fails to AEAD-open on desktop.
             auto plain = open(calendarId, sealedOnceDecoded);
             if (!plain) {
-                fprintf(stderr, "CalendarSync: failed to open message for %s\n", calendarId.c_str());
+                std::string peeledAgain = logos_transport::b64detail::decode(sealedOnceDecoded);
+                if (!peeledAgain.empty()) plain = open(calendarId, peeledAgain);
+            }
+            if (!plain) {
+                fprintf(stderr, "CalendarSync: failed to open message for %s (tried single+double base64 depth)\n", calendarId.c_str());
                 return;
             }
 
