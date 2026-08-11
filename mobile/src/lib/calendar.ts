@@ -78,6 +78,31 @@ export async function createEvent(
   return ev;
 }
 
+// Create a NEW shared calendar on this device. Generates the id + a symmetric
+// encryptionKey in the SAME format the desktop uses (two concatenated UUIDv4
+// strings, dashes and all — crypto.ts's key derivation matches it byte-for-byte),
+// starts syncing on its topic, and returns the calendar (buildInvite() gives the
+// scala:// link to share). A brand-new calendar has no peers yet; the invite
+// carries the name/key so a joiner gets everything.
+export async function createCalendar(name: string, color = "#89b4fa"): Promise<Calendar> {
+  const cal: Calendar = {
+    id: Crypto.randomUUID(),
+    name: name.trim() || "My calendar",
+    color,
+    isShared: true,
+    creatorId: await getDeviceId(),
+    encryptionKey: Crypto.randomUUID() + Crypto.randomUUID(),
+    updatedAt: Date.now(),
+  };
+  await store.saveCalendar(cal);
+  await sync.joinCalendar(cal.id, cal.encryptionKey as string);
+  // Announce it on the channel too (harmless if no peers yet; a peer already on
+  // the topic — e.g. a desktop that pre-joined — picks up the metadata).
+  await sync.sendMessage(cal.id, "CreateCalendar", JSON.stringify(cal)).catch(() => {});
+  notifyChange();
+  return cal;
+}
+
 export async function joinFromInvite(link: string): Promise<Calendar | null> {
   const inv = parseInvite(link);
   if (!inv) return null;
@@ -95,15 +120,29 @@ export async function joinFromInvite(link: string): Promise<Calendar | null> {
   return cal;
 }
 
-/** Bring sync up on every shared calendar we hold a key for. */
-export async function startSyncing(shared: boolean, onStatus?: (s: string) => void): Promise<void> {
+// ── shared-node preference ──────────────────────────────────────────────────
+// When ON, route through the device-wide Logos Delivery service (approve Scala
+// there once) instead of Scala's own embedded node. Read at sync bring-up; a
+// change needs a restart to take effect (preferServiceBackend must be set before
+// the transport starts).
+export async function getSharedNode(): Promise<boolean> {
+  return (await SecureStore.getItemAsync("scala-shared-node")) === "1";
+}
+export async function setSharedNode(on: boolean): Promise<void> {
+  await SecureStore.setItemAsync("scala-shared-node", on ? "1" : "0");
+}
+
+/** Bring sync up on every shared calendar we hold a key for. Uses the stored
+ *  shared-node preference unless one is passed explicitly. */
+export async function startSyncing(shared?: boolean, onStatus?: (s: string) => void): Promise<void> {
+  const useShared = shared ?? (await getSharedNode());
   const cals = await store.listCalendars();
   await sync.startSync({
     deviceId: await getDeviceId(),
     calendars: cals
       .filter((c) => c.encryptionKey)
       .map((c) => ({ id: c.id, encryptionKey: c.encryptionKey as string })),
-    shared,
+    shared: useShared,
     onStatus,
   });
 }
