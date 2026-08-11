@@ -145,10 +145,12 @@ void ScalaImpl::onContextReady() {
     Tx::Ops ops;
     ops.createNode = [this](const std::string& cfg, Tx::Cb cb) {
         auto r = modules().delivery_module.createNode(cfg);
+        fprintf(stderr, "[scala] delivery createNode success=%d error=%s\n", r.success, r.error.c_str());
         cb(r.success, r.error);
     };
     ops.start = [this](Tx::Cb cb) {
         auto r = modules().delivery_module.start();
+        fprintf(stderr, "[scala] delivery start success=%d error=%s\n", r.success, r.error.c_str());
         cb(r.success, r.error);
     };
     ops.subscribe = [this](const std::string& topic, Tx::Cb cb) {
@@ -195,8 +197,19 @@ void ScalaImpl::onContextReady() {
     Tx tx(std::move(ops),
           Tx::Config{
               .logLevel = "INFO",
-              .preset = "logos.dev",
-              .entryNodes = {},  // empty on GUI host
+              // FLEET = logos.test (cluster 2). logos.dev migrated to cluster 3 and
+              // breaks fresh joins; a bare config with NO entryNodes also leaves the
+              // node with zero bootstrap peers ("No peers for topic"). Pin the same
+              // logos.test fleet the phone + kym/qaku/perun use, or delivery is dead.
+              .preset = "logos.test",
+              .entryNodes = {
+                  "/dns4/node-01.do-ams3.logos.test.status.im/tcp/30303/p2p/16Uiu2HAmQ9X2xDfPG3uL77V9piYDhjq14JhKCtcmNYsTMKNqrKCj",
+                  "/dns4/node-02.do-ams3.logos.test.status.im/tcp/30303/p2p/16Uiu2HAmB8NYprrfQrgWVzsJtYWkfjsXbmJEGNMG6othXsQ53BwG",
+                  "/dns4/node-01.gc-us-central1-a.logos.test.status.im/tcp/30303/p2p/16Uiu2HAmF8WtwGPmeGHgYAX2277jHgy5cW9F7zsB8EqUjBZQAZQ3",
+                  "/dns4/node-02.gc-us-central1-a.logos.test.status.im/tcp/30303/p2p/16Uiu2HAmUuXhUW9bdJpzN1kfDziFiUZo4bszTk66cvr7uuyCHXR7",
+                  "/dns4/node-01.ac-cn-hongkong-c.logos.test.status.im/tcp/30303/p2p/16Uiu2HAmL3oU95jh1BZHozn3uNhx8HEneirgr8M1jEAapzXGDqRF",
+                  "/dns4/node-02.ac-cn-hongkong-c.logos.test.status.im/tcp/30303/p2p/16Uiu2HAm28CoBZjpyxsanC8tQpbvZ7bZJnVYuB1EgFzb571qpWsV",
+              },
               .useChannels = true,
               .hubMode = false,
               .deviceId = deviceId
