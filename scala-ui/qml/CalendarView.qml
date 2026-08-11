@@ -50,6 +50,20 @@ Item {
     // immediately (keeps every _watch(...) call-site unchanged).
     function _watch(value, ok, err) { if (ok) ok(value) }
 
+    // Cross-module returns come back DOUBLE-JSON-encoded through the bridge: a
+    // single JSON.parse yields a *string* (then a for-loop iterates its chars and
+    // every field reads undefined). Parse until we reach a non-string. Returns
+    // the parsed array/object, or `fallback` on empty/malformed.
+    function _json(raw, fallback) {
+        var v = raw;
+        for (var i = 0; i < 3 && typeof v === "string"; i++) {
+            var t = v.trim();
+            if (t === "") return fallback;
+            try { v = JSON.parse(t); } catch (e) { return (i === 0 ? fallback : v); }
+        }
+        return (v === undefined || v === null) ? fallback : v;
+    }
+
     Component.onCompleted: Qt.callLater(function() {
         root.ready = (typeof logos !== "undefined" && !!logos.callModule)
         if (root.ready) {
@@ -93,7 +107,7 @@ Item {
         if (!root.ready) return
         _watch(backend.listCalendars(),
             function(value) {
-                calendarList = JSON.parse(value || "[]")
+                calendarList = _json(value, [])
                 updateSidebarModel()
                 _refreshEvents()
             },
@@ -109,7 +123,7 @@ Item {
             var calId = calendarList[i].id
             _watch(backend.listEvents(calId),
                 function(value) {
-                    var evts = JSON.parse(value || "[]")
+                    var evts = _json(value, [])
                     allEvents = allEvents.concat(evts)
                     remaining--
                     if (remaining === 0) {
@@ -432,7 +446,7 @@ Item {
                     onTextChanged: {
                         if (text.length >= 2 && root.ready) {
                             _watch(backend.searchEvents(text),
-                                function(value) { searchResults = JSON.parse(value || "[]") },
+                                function(value) { searchResults = _json(value, []) },
                                 function(error) { console.warn("[scala] search failed:", error) }
                             )
                         } else if (text.length < 2) {
@@ -1007,7 +1021,7 @@ Item {
                         if (!root.ready) return
                         _watch(backend.getEvent(evId),
                             function(value) {
-                                _loadEventForEdit(JSON.parse(value || "{}"))
+                                _loadEventForEdit(_json(value, {}))
                             },
                             function(error) { console.warn("[scala] getEvent failed:", error) }
                         )
