@@ -1,155 +1,121 @@
 #include "calendar_store.h"
 
-#include <QDir>
-#include <QFile>
-#include <QSaveFile>
-#include <QByteArray>
+#include <fstream>
+#include <sstream>
+#include <filesystem>
+#include <cstdlib>
 
-// Stable, writable data dir — the qaku pattern ($HOME/.qaku-core). NOT
-// QStandardPaths::AppDataLocation (which resolves under the transient AppImage
-// mount in the Basecamp sandbox — a different path every launch). Override with
-// SCALA_CORE_DATA for multi-instance / tests.
-static QString computeDataDir() {
-    QByteArray env = qgetenv("SCALA_CORE_DATA");
-    if (!env.isEmpty())
-        return QString::fromUtf8(env);
-    QByteArray home = qgetenv("HOME");
-    return (home.isEmpty() ? QStringLiteral("/tmp") : QString::fromUtf8(home)) + QStringLiteral("/.scala-core");
+namespace fs = std::filesystem;
+using scala::json;
+
+// Stable, writable data dir — the qaku pattern ($HOME/.qaku-core). Override with
+// SCALA_CORE_DATA (multi-instance / tests). NOT QStandardPaths (transient in the
+// Basecamp AppImage sandbox).
+static std::string computeDataDir() {
+    if (const char* e = std::getenv("SCALA_CORE_DATA")) if (*e) return e;
+    if (const char* h = std::getenv("HOME")) if (*h) return std::string(h) + "/.scala-core";
+    return "/tmp/.scala-core";
+}
+static bool ensureDir(const std::string& d) {
+    if (d.empty()) return false;
+    std::error_code ec; fs::create_directories(d, ec); return fs::exists(d, ec);
+}
+static json readJson(const std::string& path) {
+    std::ifstream f(path);
+    if (!f) return json();
+    std::stringstream ss; ss << f.rdbuf();
+    return json::parse(ss.str(), nullptr, false);   // no-throw; returns discarded on error
+}
+// Atomic write: temp then rename.
+static void writeJson(const std::string& path, const json& j) {
+    const std::string tmp = path + ".tmp";
+    { std::ofstream f(tmp); if (!f) return; f << j.dump(); }
+    std::error_code ec; fs::rename(tmp, path, ec);
+    if (ec) { fs::remove(tmp, ec); }
 }
 
 CalendarStore::CalendarStore() {
     m_dataDir = computeDataDir();
-    QDir().mkpath(m_dataDir);
-    load();
+    ensureDir(m_dataDir);
+    ensureDir(m_dataDir + "/logs");
 }
 
-// ── robust JSON file I/O (never throws) ──────────────────────────────────────
-void CalendarStore::writeJsonFile(const QString &path, const QJsonDocument &doc) {
-    QSaveFile f(path);                       // QSaveFile = atomic (temp + commit)
-    if (!f.open(QIODevice::WriteOnly))
-        return;
-    f.write(doc.toJson(QJsonDocument::Compact));
-    f.commit();
-}
+std::string CalendarStore::calFile() const { return m_dataDir + "/calendars.json"; }
+std::string CalendarStore::logFile(const std::string& id) const { return m_dataDir + "/logs/" + id + ".json"; }
+std::string CalendarStore::kvFile() const { return m_dataDir + "/kv.json"; }
 
-QJsonDocument CalendarStore::readJsonFile(const QString &path) {
-    QFile f(path);
-    if (!f.exists() || !f.open(QIODevice::ReadOnly))
-        return {};
-    const QByteArray raw = f.readAll();
-    f.close();
-    QJsonParseError err{};
-    QJsonDocument doc = QJsonDocument::fromJson(raw, &err);   // no-throw
-    if (err.error != QJsonParseError::NoError)
-        return {};
-    return doc;
-}
-
-void CalendarStore::load() {
-    // calendars.json
-    QJsonDocument cd = readJsonFile(m_dataDir + QStringLiteral("/calendars.json"));
-    if (cd.isArray()) {
-        for (const QJsonValue &v : cd.array()) {
-            if (!v.isObject()) continue;
-            scala::Calendar c = scala::Calendar::fromJson(v.toObject());
-            if (!c.id.isEmpty()) m_calendars.insert(c.id, c);
-        }
+// ── registry ─────────────────────────────────────────────────────────────────
+std::vector<scala::CalReg> CalendarStore::calendars() const {
+    std::vector<scala::CalReg> out;
+    json arr = readJson(calFile());
+    if (!arr.is_array()) return out;
+    for (auto& j : arr) {
+        if (!j.is_object() || !j.contains("id")) continue;
+        out.push_back({ j.value("id", std::string()), j.value("key", std::string()),
+                        j.value("name", std::string()), j.value("color", std::string()) });
     }
-    // events.json
-    QJsonDocument ed = readJsonFile(m_dataDir + QStringLiteral("/events.json"));
-    if (ed.isArray()) {
-        for (const QJsonValue &v : ed.array()) {
-            if (!v.isObject()) continue;
-            scala::CalendarEvent e = scala::CalendarEvent::fromJson(v.toObject());
-            if (!e.id.isEmpty()) m_events.insert(e.id, e);
-        }
-    }
-    // kv.json
-    QJsonDocument kd = readJsonFile(m_dataDir + QStringLiteral("/kv.json"));
-    if (kd.isObject()) {
-        const QJsonObject o = kd.object();
-        for (auto it = o.constBegin(); it != o.constEnd(); ++it)
-            m_kv.insert(it.key(), it.value().toString());
-    }
-}
-
-void CalendarStore::writeCalendars() const {
-    QJsonArray arr;
-    for (const scala::Calendar &c : m_calendars) arr.append(c.toJson());
-    writeJsonFile(m_dataDir + QStringLiteral("/calendars.json"), QJsonDocument(arr));
-}
-void CalendarStore::writeEvents() const {
-    QJsonArray arr;
-    for (const scala::CalendarEvent &e : m_events) arr.append(e.toJson());
-    writeJsonFile(m_dataDir + QStringLiteral("/events.json"), QJsonDocument(arr));
-}
-void CalendarStore::writeKv() const {
-    QJsonObject o;
-    for (auto it = m_kv.constBegin(); it != m_kv.constEnd(); ++it) o.insert(it.key(), it.value());
-    writeJsonFile(m_dataDir + QStringLiteral("/kv.json"), QJsonDocument(o));
-}
-
-// ── Calendar CRUD ────────────────────────────────────────────────────────────
-QString CalendarStore::saveCalendar(const scala::Calendar &cal) {
-    m_calendars.insert(cal.id, cal);
-    writeCalendars();
-    return cal.id;
-}
-scala::Calendar CalendarStore::getCalendar(const QString &id) const {
-    return m_calendars.value(id);   // default-constructed (empty id) if missing
-}
-QList<scala::Calendar> CalendarStore::listCalendars() const {
-    return m_calendars.values();
-}
-bool CalendarStore::deleteCalendar(const QString &id) {
-    if (!m_calendars.contains(id)) return false;
-    m_calendars.remove(id);
-    // drop its events too
-    for (auto it = m_events.begin(); it != m_events.end();) {
-        if (it.value().calendarId == id) it = m_events.erase(it);
-        else ++it;
-    }
-    writeCalendars();
-    writeEvents();
-    return true;
-}
-
-// ── Event CRUD ─────────────────────────────────────────────────────────────
-QString CalendarStore::saveEvent(const scala::CalendarEvent &ev) {
-    m_events.insert(ev.id, ev);
-    writeEvents();
-    return ev.id;
-}
-scala::CalendarEvent CalendarStore::getEvent(const QString &id) const {
-    return m_events.value(id);
-}
-QList<scala::CalendarEvent> CalendarStore::listEvents(const QString &calendarId) const {
-    QList<scala::CalendarEvent> out;
-    for (const scala::CalendarEvent &e : m_events)
-        if (e.calendarId == calendarId) out.append(e);
     return out;
 }
-bool CalendarStore::updateEvent(const scala::CalendarEvent &ev) {
-    m_events.insert(ev.id, ev);
-    writeEvents();
-    return true;
+scala::CalReg CalendarStore::calendar(const std::string& id) const {
+    for (auto& r : calendars()) if (r.id == id) return r;
+    return {};
 }
-bool CalendarStore::deleteEvent(const QString &id) {
-    if (!m_events.contains(id)) return false;
-    m_events.remove(id);
-    writeEvents();
+void CalendarStore::upsertCalendar(const scala::CalReg& r) {
+    auto cals = calendars();
+    bool found = false;
+    for (auto& c : cals) if (c.id == r.id) {
+        c.key = r.key.empty() ? c.key : r.key;
+        if (!r.name.empty()) c.name = r.name;
+        if (!r.color.empty()) c.color = r.color;
+        found = true;
+    }
+    if (!found) cals.push_back(r);
+    json arr = json::array();
+    for (auto& c : cals) arr.push_back({{"id", c.id}, {"key", c.key}, {"name", c.name}, {"color", c.color}});
+    writeJson(calFile(), arr);
+}
+void CalendarStore::removeCalendar(const std::string& id) {
+    auto cals = calendars();
+    json arr = json::array();
+    for (auto& c : cals) if (c.id != id) arr.push_back({{"id", c.id}, {"key", c.key}, {"name", c.name}, {"color", c.color}});
+    writeJson(calFile(), arr);
+    std::error_code ec; fs::remove(logFile(id), ec);
+}
+
+// ── event log ────────────────────────────────────────────────────────────────
+std::vector<scala::Event> CalendarStore::log(const std::string& calId) const {
+    std::vector<scala::Event> out;
+    json arr = readJson(logFile(calId));
+    if (!arr.is_array()) return out;
+    for (auto& j : arr) {
+        try { scala::Event e = scala::eventFromJson(j); if (!e.id.empty()) out.push_back(e); }
+        catch (...) { /* skip a bad entry */ }
+    }
+    return out;
+}
+void CalendarStore::writeLog(const std::string& calId, const std::vector<scala::Event>& evs) const {
+    json arr = json::array();
+    for (auto& e : evs) arr.push_back(scala::eventToJson(e));
+    writeJson(logFile(calId), arr);
+}
+bool CalendarStore::appendEvent(const std::string& calId, const scala::Event& e) {
+    if (e.id.empty()) return false;
+    auto evs = log(calId);
+    for (auto& x : evs) if (x.id == e.id) return false;   // dedup by id — idempotent redelivery
+    evs.push_back(e);
+    writeLog(calId, scala::mergeEvents(evs));              // keep HLC-sorted + unique
     return true;
 }
 
-// ── KV (identity + settings) ─────────────────────────────────────────────────
-void CalendarStore::kvSet(const QString &key, const QString &value) const {
-    m_kv.insert(key, value);
-    writeKv();
+// ── kv ───────────────────────────────────────────────────────────────────────
+std::string CalendarStore::kvGet(const std::string& key) const {
+    json o = readJson(kvFile());
+    if (o.is_object() && o.contains(key) && o[key].is_string()) return o[key].get<std::string>();
+    return {};
 }
-QString CalendarStore::kvGet(const QString &key) const {
-    return m_kv.value(key);
-}
-void CalendarStore::kvRemove(const QString &key) const {
-    m_kv.remove(key);
-    writeKv();
+void CalendarStore::kvSet(const std::string& key, const std::string& value) {
+    json o = readJson(kvFile());
+    if (!o.is_object()) o = json::object();
+    o[key] = value;
+    writeJson(kvFile(), o);
 }

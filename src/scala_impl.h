@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "scala_engine.hpp"
 #include <logos_module_context.h>  // LogosModuleContext base + logos_events: + modules()
 
 // Forward declarations for internal components (ported to std types)
@@ -116,6 +117,14 @@ private:
     std::string m_namespace;
     bool m_ctxReady = false;              // onContextReady() actually fired
     std::string m_deliveryStatus;         // last transport status (Connecting/Connected/error)
+
+    // ── event-log CRDT helpers ───────────────────────────────────────────────
+    long long m_wall = 0;                 // HLC clock
+    long long m_ctr = 0;
+    scala::HLC nextHlc();
+    scala::Event mkEvent(const std::string& type, const scala::json& payload);
+    void publishAndApply(const std::string& calId, const scala::Event& e);  // append locally + broadcast
+    void applyIncoming(const std::string& calId, const std::string& eventJson);  // merge a received event
     // Idempotently (re)attempt the delivery bootstrap. Called from onContextReady
     // AND lazily from the polled read methods (kym self-drive pattern) so the node
     // comes up even if the lifecycle hook is flaky / there were no shared calendars

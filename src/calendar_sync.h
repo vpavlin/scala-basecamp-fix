@@ -53,6 +53,7 @@ using LogosMap = nlohmann::json;
 class CalendarSync {
 public:
     using OnMessageReceived = std::function<void(const std::string &calendarId, const SyncMessage &msg)>;
+    using OnEventReceived = std::function<void(const std::string &calendarId, const std::string &eventJson)>;
     using OnSyncStatus = std::function<void(const std::string &calendarId, const std::string &status)>;
 
     CalendarSync();
@@ -60,6 +61,7 @@ public:
 
     /// Set callbacks (called from ScalaImpl)
     void setMessageHandler(OnMessageReceived h);
+    void setEventHandler(OnEventReceived h);   // CRDT path: raw sealed event JSON
     void setStatusHandler(OnSyncStatus h);
 
     /// Start syncing a calendar (subscribe to its topic via transport).
@@ -70,6 +72,8 @@ public:
 
     /// Send a sync message for a calendar (seals + broadcasts via transport).
     void sendMessage(const std::string &calendarId, const SyncMessage &msg);
+    /// CRDT: seal + broadcast one event's JSON on the calendar's channel.
+    void sendEvent(const std::string &calendarId, const std::string &eventJson);
 
     /// Whether a calendar is currently syncing.
     bool isSyncing(const std::string &calendarId) const;
@@ -102,6 +106,7 @@ private:
 
     // Callbacks
     OnMessageReceived m_onMessage;
+    OnEventReceived m_onEvent;
     OnSyncStatus m_onStatus;
 
     // Device identity (set from ScalaImpl)

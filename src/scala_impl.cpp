@@ -4,207 +4,178 @@
 // Generated umbrella: modules() + typed dependency wrappers (delivery_module)
 #include "logos_sdk.h"
 
+#include "calendar_store.h"
+#include "calendar_sync.h"
+
+#include <nlohmann/json.hpp>
+#include "logos_transport.hpp"
+
 #include <chrono>
 #include <cstdlib>
-#include <cstring>
+#include <cstdio>
 #include <ctime>
 #include <fstream>
 #include <sstream>
-#include <iomanip>
-#include <algorithm>
-#include <QObject>
-#include <QUrl>
-#include <QUrlQuery>
+#include <vector>
+#include <cctype>
+#include <cstring>
 
-// nlohmann/json must be included before transport header (templated on it)
-#include <nlohmann/json.hpp>
+using scala::json;
 
-// Transport integration — include AFTER nlohmann and generated types
-#include "logos_transport.hpp"
-
-// ── Minimal JSON helpers (replace QJsonDocument for universal pattern) ───────
-// TODO: Replace with nlohmann/json or LogosMap/LogosList from logos_json.h
-// when available. For now, pass JSON strings through — the wire format is
-// identical to what the old Qt code produced.
-
-static std::string jsonEscape(const std::string& s) {
-    std::string out;
-    out.reserve(s.size() + 16);
-    for (char c : s) {
-        switch (c) {
-            case '"':  out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\n': out += "\\n"; break;
-            case '\r': out += "\\r"; break;
-            case '\t': out += "\\t"; break;
-            default:   out += c; break;
-        }
+// ── small helpers ────────────────────────────────────────────────────────────
+static std::string generateUuid() {
+    std::ostringstream oss;
+    oss << std::hex;
+    for (int i = 0; i < 32; i++) {
+        int r = std::rand() % 16;
+        if (i == 8 || i == 12 || i == 16 || i == 20) oss << '-';
+        if (i == 12) oss << '4';
+        else if (i == 16) oss << (8 + (r & 3));
+        else oss << r;
     }
+    return oss.str();
+}
+static long long nowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch()).count();
+}
+static std::string stableIdentity() {
+    std::ifstream f("/etc/machine-id");
+    std::string id; if (f) std::getline(f, id);
+    if (id.empty()) id = "scala-" + std::to_string(nowMs());
+    return "scala-" + id.substr(0, 16);
+}
+// base64url (RFC 4648, no padding) — matches the mobile invite key encoding.
+static const char* kB64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+static std::string b64urlEncode(const std::string& in) {
+    std::string out; int val = 0, bits = -6;
+    for (unsigned char c : in) { val = (val << 8) + c; bits += 8;
+        while (bits >= 0) { out.push_back(kB64[(val >> bits) & 0x3F]); bits -= 6; } }
+    if (bits > -6) out.push_back(kB64[((val << 8) >> (bits + 8)) & 0x3F]);
     return out;
 }
-
-static std::string generateUuid() {
-    // Simple UUID v4 generator (no Qt QUuid dependency)
-    std::ostringstream oss;
-    oss << std::hex << std::setfill('0');
-    for (int i = 0; i < 32; i++) {
-        unsigned char b = static_cast<unsigned char>(std::rand() % 256);
-        if (i == 8 || i == 13 || i == 18 || i == 23)
-            oss << '-';
-        // Version 4 at position 14-15
-        if (i == 14) b = (b & 0x0f) | 0x40;
-        // Variant at position 19
-        if (i == 19) b = (b & 0x3f) | 0x80;
-        oss << std::setw(2) << static_cast<int>(b);
+static std::string b64urlDecode(const std::string& in) {
+    std::vector<int> T(256, -1); for (int i = 0; i < 64; i++) T[(unsigned char)kB64[i]] = i;
+    std::string out; int val = 0, bits = -8;
+    for (unsigned char c : in) { if (T[c] == -1) continue; val = (val << 6) + T[c]; bits += 6;
+        if (bits >= 0) { out.push_back(char((val >> bits) & 0xFF)); bits -= 8; } }
+    return out;
+}
+static std::string urlEncode(const std::string& s) {
+    static const char* hex = "0123456789ABCDEF"; std::string o;
+    for (unsigned char c : s) {
+        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') o.push_back(c);
+        else { o.push_back('%'); o.push_back(hex[c >> 4]); o.push_back(hex[c & 15]); }
     }
-    return oss.str();
+    return o;
+}
+static std::string urlDecode(const std::string& s) {
+    std::string o;
+    for (size_t i = 0; i < s.size(); i++) {
+        if (s[i] == '%' && i + 2 < s.size()) { o.push_back((char)std::strtol(s.substr(i + 1, 2).c_str(), nullptr, 16)); i += 2; }
+        else if (s[i] == '+') o.push_back(' ');
+        else o.push_back(s[i]);
+    }
+    return o;
+}
+static std::map<std::string, std::string> parseQuery(const std::string& link) {
+    std::map<std::string, std::string> q;
+    auto pos = link.find('?'); if (pos == std::string::npos) return q;
+    std::string qs = link.substr(pos + 1); std::stringstream ss(qs); std::string pair;
+    while (std::getline(ss, pair, '&')) {
+        auto eq = pair.find('=');
+        if (eq == std::string::npos) continue;
+        q[urlDecode(pair.substr(0, eq))] = urlDecode(pair.substr(eq + 1));
+    }
+    return q;
 }
 
-static int64_t currentMs() {
-    auto tp = std::chrono::system_clock::now().time_since_epoch();
-    return std::chrono::duration_cast<std::chrono::milliseconds>(tp).count();
-}
-
-static std::string generateStableIdentityImpl() {
-    // Try to read /etc/machine-id for a stable identity
-    std::ifstream idFile("/etc/machine-id");
-    std::string machineId;
-    if (idFile.is_open()) {
-        std::getline(idFile, machineId);
-    }
-    if (machineId.empty()) {
-        machineId = "scala-fallback-id";
-    }
-
-    // SHA-256 hash of machine-id
-    // TODO: Replace with proper crypto when available in universal pattern
-    // For now, use a simple hash that's stable per-machine
-    unsigned char hash[32];
-    // Fallback: just use the machine-id hex-encoded if no crypto available
-    std::ostringstream oss;
-    for (char c : machineId) {
-        oss << std::hex << std::setw(2) << std::setfill('0')
-            << static_cast<int>(static_cast<unsigned char>(c));
-    }
-    return oss.str();
-}
-
-// ── Forward declarations for Qt-based components (adapted later) ──────────────
-// These are the existing CalendarStore/CalendarSync classes that still use Qt.
-// The universal pattern requires pure C++, so we wrap them here with type
-// conversion at the boundary. Full port to std types is a follow-up task.
-
-#include "calendar_store.h"
-#include "calendar_sync.h"
-#include "types.h"
-#include "qr_generator.h"
-
-// ── Construction / Destruction ───────────────────────────────────────────────
-
+// ── construction ─────────────────────────────────────────────────────────────
 ScalaImpl::ScalaImpl() {
     m_store = new CalendarStore();
-    m_sync = new CalendarSync();  // no parent in universal pattern
+    m_sync = new CalendarSync();
+    // CRDT path: a received event's raw JSON is merged into that calendar's log.
+    m_sync->setEventHandler([this](const std::string& calId, const std::string& eventJson) {
+        applyIncoming(calId, eventJson);
+    });
+    m_sync->setStatusHandler([this](const std::string& calId, const std::string& status) {
+        syncStatusChanged(calId, status);
+    });
+}
+ScalaImpl::~ScalaImpl() { delete m_sync; delete m_store; }
 
-    // Connect sync message handler (pure C++ callback, no Qt signals)
-    m_sync->setMessageHandler(
-        [this](const std::string& calendarId, const SyncMessage& msg) {
-            onSyncMessageReceived(calendarId, msg.toBytes());
-        });
-    m_sync->setStatusHandler(
-        [this](const std::string& calendarId, const std::string& status) {
-            syncStatusChanged(calendarId, status);
-        });
+// ── HLC + event helpers ──────────────────────────────────────────────────────
+scala::HLC ScalaImpl::nextHlc() {
+    long long t = nowMs();
+    if (t > m_wall) { m_wall = t; m_ctr = 0; } else { m_ctr += 1; }
+    return scala::HLC{ m_wall, m_ctr, m_identity };
+}
+scala::Event ScalaImpl::mkEvent(const std::string& type, const json& payload) {
+    scala::Event e; e.v = 1; e.id = generateUuid(); e.type = type;
+    e.hlc = nextHlc(); e.dev = m_identity; e.payload = payload;
+    return e;
+}
+void ScalaImpl::publishAndApply(const std::string& calId, const scala::Event& e) {
+    m_store->appendEvent(calId, e);                        // persist locally first
+    m_sync->sendEvent(calId, scala::eventToJson(e).dump()); // then broadcast (no-op if not syncing)
+}
+void ScalaImpl::applyIncoming(const std::string& calId, const std::string& eventJson) {
+    json j = json::parse(eventJson, nullptr, false);
+    if (j.is_discarded() || !j.is_object()) return;
+    scala::Event e = scala::eventFromJson(j);
+    if (e.id.empty()) return;
+    m_store->appendEvent(calId, e);   // idempotent (dedup by id); the view's poll refolds
 }
 
-ScalaImpl::~ScalaImpl() {
-    delete m_sync;
-    delete m_store;
-}
-
-// ── Context lifecycle ────────────────────────────────────────────────────────
-
+// ── context lifecycle ────────────────────────────────────────────────────────
 void ScalaImpl::onContextReady() {
-    // Called when the module context is fully initialized.
-    // At this point, modules().delivery_module is available for inter-module calls.
+    // Identity (SDS senderId + event author) — persisted so it's stable.
+    m_identity = m_store->kvGet("identity");
+    if (m_identity.empty()) { m_identity = stableIdentity(); m_store->kvSet("identity", m_identity); }
 
-    // Load stored identity or generate stable fallback
-    std::string stored = m_store->kvGet("identity").toStdString();
-    if (!stored.empty()) {
-        m_identity = stored;
-    } else {
-        m_identity = generateStableIdentityImpl();
-        m_store->kvSet("identity", QString::fromStdString(m_identity));
-    }
-
-    // ── Wire transport (logos-transport integration) ──────────────────────
     using LogosMap = nlohmann::json;
     using Tx = logos_transport::Transport<LogosMap>;
 
-    // Build Ops — thin wrappers around modules().delivery_module.*
-    // Delivery module uses SYNC methods; we adapt them to the transport's callback API
-    // ASYNC delivery calls (qaku/kym pattern). The SYNC variants block the core's
-    // event-loop thread while the node dials the fleet — which hits the 20s IPC
-    // timeout and leaves the node never-ready ("node not ready", no traffic). The
-    // *Async variants return immediately and fire the callback when done, so the
-    // transport's createNode→start→join chain completes in the background.
+    // ASYNC delivery ops (qaku/kym pattern — sync calls block the event-loop thread
+    // on the 20s IPC timeout and leave the node never-ready).
     Tx::Ops ops;
     ops.createNode = [this](const std::string& cfg, Tx::Cb cb) {
         modules().delivery_module.createNodeAsync(cfg, [cb](auto r) {
-            fprintf(stderr, "[scala] delivery createNode success=%d error=%s\n", (int)r.success, r.error.c_str());
-            cb(r.success, r.error);
-        });
+            fprintf(stderr, "[scala] createNode success=%d error=%s\n", (int)r.success, r.error.c_str());
+            cb(r.success, r.error); });
     };
     ops.start = [this](Tx::Cb cb) {
         modules().delivery_module.startAsync([cb](auto r) {
-            fprintf(stderr, "[scala] delivery start success=%d error=%s\n", (int)r.success, r.error.c_str());
-            cb(r.success, r.error);
-        });
+            fprintf(stderr, "[scala] start success=%d error=%s\n", (int)r.success, r.error.c_str());
+            cb(r.success, r.error); });
     };
-    ops.subscribe = [this](const std::string& topic, Tx::Cb cb) {
-        modules().delivery_module.subscribeAsync(topic, [cb](auto r) { cb(r.success, r.error); });
+    ops.subscribe = [this](const std::string& t, Tx::Cb cb) {
+        modules().delivery_module.subscribeAsync(t, [cb](auto r) { cb(r.success, r.error); });
     };
     ops.channelCreate = [this](const std::string& id, const std::string& ct, const std::string& sid, Tx::Cb cb) {
         modules().delivery_module.channelCreateAsync(id, ct, sid, [cb](auto r) { cb(r.success, r.error); });
     };
     ops.channelSend = [this](const std::string& id, const LogosMap& payload, Tx::Cb cb) {
-        std::string data = payload.dump();
-        std::vector<uint8_t> bytes(data.begin(), data.end());
+        std::string data = payload.dump(); std::vector<uint8_t> bytes(data.begin(), data.end());
         modules().delivery_module.channelSendAsync(id, bytes, [cb](auto r) { cb(r.success, r.error); });
     };
-
-    // Receive handlers — connect delivery_module events to transport callbacks
-    // The builder generates typed event subscription methods from logos_events:
     ops.onMessage = [this](Tx::RecvCb handler) {
         modules().delivery_module.onMessageReceived(
-            [handler](const std::string& hash, const std::string& topic,
-                      const std::vector<uint8_t>& payload, int64_t ts) {
-                std::string s(payload.begin(), payload.end());
-                LogosMap p = LogosMap::parse(s, nullptr, false);
-                if (p.is_discarded()) p = s;
-                handler(topic, p);
-            });
+            [handler](const std::string&, const std::string& topic, const std::vector<uint8_t>& p, int64_t) {
+                std::string s(p.begin(), p.end()); LogosMap j = LogosMap::parse(s, nullptr, false);
+                if (j.is_discarded()) j = s; handler(topic, j); });
     };
     ops.onChannelMessage = [this](Tx::RecvCb handler) {
         modules().delivery_module.onChannelMessageReceived(
-            [handler](const std::string& channelId, const std::string& senderId,
-                      const std::vector<uint8_t>& payload, int64_t ts) {
-                std::string s(payload.begin(), payload.end());
-                LogosMap p = LogosMap::parse(s, nullptr, false);
-                if (p.is_discarded()) p = s;
-                handler(channelId, p);
-            });
+            [handler](const std::string& cid, const std::string&, const std::vector<uint8_t>& p, int64_t) {
+                std::string s(p.begin(), p.end()); LogosMap j = LogosMap::parse(s, nullptr, false);
+                if (j.is_discarded()) j = s; handler(cid, j); });
     };
 
-    // Construct transport
-    std::string deviceId = m_identity.empty() ? "scala-default" : m_identity;
     Tx tx(std::move(ops),
           Tx::Config{
               .logLevel = "INFO",
-              // FLEET = logos.test (cluster 2). logos.dev migrated to cluster 3 and
-              // breaks fresh joins; a bare config with NO entryNodes also leaves the
-              // node with zero bootstrap peers ("No peers for topic"). Pin the same
-              // logos.test fleet the phone + kym/qaku/perun use, or delivery is dead.
-              .preset = "logos.test",
+              .preset = "logos.test",   // logos.dev migrated to cluster 3; logos.test = cluster 2
               .entryNodes = {
                   "/dns4/node-01.do-ams3.logos.test.status.im/tcp/30303/p2p/16Uiu2HAmQ9X2xDfPG3uL77V9piYDhjq14JhKCtcmNYsTMKNqrKCj",
                   "/dns4/node-02.do-ams3.logos.test.status.im/tcp/30303/p2p/16Uiu2HAmB8NYprrfQrgWVzsJtYWkfjsXbmJEGNMG6othXsQ53BwG",
@@ -215,559 +186,202 @@ void ScalaImpl::onContextReady() {
               },
               .useChannels = true,
               .hubMode = false,
-              .deviceId = deviceId
+              .deviceId = m_identity.empty() ? std::string("scala-default") : m_identity,
           },
+          // topics: every calendar in the registry has a channel.
           [this]{ std::vector<std::string> topics;
-                  auto calIds = m_store->listCalendars();
-                  for (const auto& cal : calIds) {
-                      if (cal.isShared)
-                          topics.push_back(CalendarSync::topicForCalendar(cal.id.toStdString()));
-                  }
+                  for (const auto& c : m_store->calendars())
+                      topics.push_back(CalendarSync::topicForCalendar(c.id));
                   return topics; },
           [this](const std::string& topic, const std::string& sealedOnceDecoded) {
               m_sync->handleReceive(topic, sealedOnceDecoded);
           },
           /*onReady*/ {},
-          /*setStatus*/ [this](const std::string& s) {
-              m_deliveryStatus = s;
-              fprintf(stderr, "[scala] delivery status: %s\n", s.c_str());
-          });
+          /*setStatus*/ [this](const std::string& s) { m_deliveryStatus = s; });
 
     m_sync->setTransport(std::move(tx));
     m_ctxReady = true;
 
-    // Register keys + mark syncing for every ALREADY-shared calendar loaded from
-    // disk. startSync() was only called from shareCalendar/joinSharedCalendar, so
-    // after a restart a persisted shared calendar had its topic joined on the wire
-    // (transport onReady) but NO key in m_activeTopics → isSyncing()=false →
-    // createEvent never broadcast and inbound messages couldn't be decrypted. This
-    // is why nothing synced after a restart. Register them now.
-    {
-        auto calendars = m_store->listCalendars();
-        for (const auto& cal : calendars) {
-            if (cal.isShared && !cal.encryptionKey.isEmpty())
-                m_sync->startSync(cal.id.toStdString(), cal.encryptionKey.toStdString());
-        }
-    }
+    // Register each calendar's key so seal/open + channel joins work after a restart.
+    for (const auto& c : m_store->calendars())
+        if (!c.key.empty()) m_sync->startSync(c.id, c.key);
 
     m_sync->bootstrap();
 }
 
-void ScalaImpl::ensureDelivery() {
-    // Idempotent: CalendarSync::bootstrap() no-ops if already ready/starting.
-    if (m_sync) m_sync->bootstrap();
-}
+void ScalaImpl::ensureDelivery() { if (m_sync) m_sync->bootstrap(); }
 
-// ── Namespace API ────────────────────────────────────────────────────────────
-
-void ScalaImpl::setNamespace(const std::string& ns) {
-    m_namespace = ns;
-    m_store->setNamespace(QString::fromStdString(ns));
-}
-
-// ── Identity API ─────────────────────────────────────────────────────────────
-
-std::string ScalaImpl::getIdentity() const {
-    return m_identity;
-}
-
+// ── identity ─────────────────────────────────────────────────────────────────
+std::string ScalaImpl::getIdentity() const { return m_identity; }
 void ScalaImpl::setIdentity(const std::string& pubkeyHex) {
-    if (m_identity != pubkeyHex) {
-        m_identity = pubkeyHex;
-        m_store->kvSet("identity", QString::fromStdString(m_identity));
-        identityChanged();  // emit event (generated by logos_events:)
-    }
+    if (m_identity != pubkeyHex) { m_identity = pubkeyHex; m_store->kvSet("identity", m_identity); identityChanged(); }
 }
+void ScalaImpl::setNamespace(const std::string&) { /* isolation is via SCALA_CORE_DATA now */ }
 
-// ── Calendar CRUD ────────────────────────────────────────────────────────────
-
+// ── calendars ────────────────────────────────────────────────────────────────
 std::string ScalaImpl::createCalendar(const std::string& name, const std::string& color) {
-    scala::Calendar cal;
-    cal.id = QString::fromStdString(generateUuid());
-    cal.name = QString::fromStdString(name);
-    cal.color = QString::fromStdString(color);
-    cal.creatorId = QString::fromStdString(m_identity);
-    // Shared-by-default (kym/qaku/mobile pattern): every calendar gets a key and
-    // syncs immediately; "private" = a key you simply never hand out. This makes
-    // sync work without a separate "share" step and matches the mobile app (whose
-    // createCalendar also generates a key up front), so a calendar created on either
-    // side is on the same footing.
-    cal.encryptionKey = QString::fromStdString(generateUuid() + generateUuid());
-    cal.isShared = true;
-    qint64 now = QDateTime::currentMSecsSinceEpoch();
-    cal.createdAt = now;
-    cal.updatedAt = now;
-
-    m_store->saveCalendar(cal);
-    m_sync->startSync(cal.id.toStdString(), cal.encryptionKey.toStdString());
-    return cal.id.toStdString();
+    std::string id = generateUuid();
+    std::string key = generateUuid() + generateUuid();   // 72-char dashed, same as mobile
+    m_store->upsertCalendar({ id, key, name, color });
+    m_sync->startSync(id, key);
+    publishAndApply(id, mkEvent(scala::ET::CAL_META, json{{"name", name}, {"color", color}}));
+    return id;
 }
-
 std::string ScalaImpl::listCalendars() {
-    ensureDelivery();  // kym self-drive: the view polls this, so it re-attempts bootstrap
-    auto calendars = m_store->listCalendars();
-    QJsonArray arr;
-    for (const auto& cal : calendars)
-        arr.append(cal.toJson());
-    return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact)).toStdString();
+    ensureDelivery();   // kym self-drive
+    json arr = json::array();
+    for (const auto& c : m_store->calendars()) {
+        json f = scala::foldCalendar(c.id, m_store->log(c.id));
+        std::string nm = f.value("name", std::string()); if (nm.empty()) nm = c.name;
+        std::string col = f.value("color", std::string()); if (col.empty()) col = c.color;
+        arr.push_back(json{{"id", c.id}, {"name", nm}, {"color", col},
+                           {"isShared", true}, {"encryptionKey", c.key}, {"creatorId", m_identity}});
+    }
+    return arr.dump();
 }
-
 bool ScalaImpl::deleteCalendar(const std::string& id) {
-    // Stop sync if running before deleting
-    if (m_sync->isSyncing(id))
-        m_sync->stopSync(id);
-
-    return m_store->deleteCalendar(QString::fromStdString(id));
+    m_sync->stopSync(id); m_store->removeCalendar(id); return true;
 }
 
-// ── Event CRUD ───────────────────────────────────────────────────────────────
-
+// ── events ───────────────────────────────────────────────────────────────────
 std::string ScalaImpl::createEvent(const std::string& calendarId, const std::string& eventJson) {
-    QJsonDocument doc = QJsonDocument::fromJson(QString::fromStdString(eventJson).toUtf8());
-    QJsonObject obj = doc.object();
-
-    scala::CalendarEvent ev = scala::CalendarEvent::fromJson(obj);
-    ev.id = QString::fromStdString(generateUuid());
-    ev.calendarId = QString::fromStdString(calendarId);
-    ev.creatorId = QString::fromStdString(m_identity);
-    qint64 now = QDateTime::currentMSecsSinceEpoch();
-    ev.createdAt = now;
-    ev.updatedAt = now;
-
-    m_store->saveEvent(ev);
-
-    // Broadcast to peers if calendar is syncing
-    if (m_sync->isSyncing(ev.calendarId.toStdString())) {
-        SyncMessage msg;
-        msg.type = SyncMessageType::CreateEvent;
-        msg.calendarId = ev.calendarId.toStdString();
-        msg.senderId = m_identity;
-        msg.payload = QString::fromUtf8(
-            QJsonDocument(ev.toJson()).toJson(QJsonDocument::Compact)).toStdString();
-        msg.timestamp = now;
-        m_sync->sendMessage(ev.calendarId.toStdString(), msg);
-    }
-
-    return ev.id.toStdString();
+    json p = json::parse(eventJson, nullptr, false);
+    if (p.is_discarded() || !p.is_object()) return "";
+    p["id"] = generateUuid();
+    p.erase("calendarId"); p.erase("creatorId");   // set by the fold
+    publishAndApply(calendarId, mkEvent(scala::ET::EVENT_PUT, p));
+    return p["id"].get<std::string>();
 }
-
 std::string ScalaImpl::updateEvent(const std::string& eventJson) {
-    QJsonDocument doc = QJsonDocument::fromJson(QString::fromStdString(eventJson).toUtf8());
-    QJsonObject obj = doc.object();
-
-    scala::CalendarEvent ev = scala::CalendarEvent::fromJson(obj);
-
-    // Ownership check: only creator can update
-    auto existing = m_store->getEvent(ev.id);
-    if (!existing.id.isEmpty() && !existing.creatorId.isEmpty()
-        && existing.creatorId != QString::fromStdString(m_identity)) {
-        QJsonObject err;
-        err["error"] = "not_authorized";
-        return QString::fromUtf8(QJsonDocument(err).toJson(QJsonDocument::Compact)).toStdString();
-    }
-
-    ev.creatorId = existing.creatorId;
-    ev.updatedAt = QDateTime::currentMSecsSinceEpoch();
-
-    bool ok = m_store->updateEvent(ev);
-    if (ok) {
-        // Broadcast to peers if calendar is syncing
-        if (m_sync->isSyncing(ev.calendarId.toStdString())) {
-            SyncMessage msg;
-            msg.type = SyncMessageType::UpdateEvent;
-            msg.calendarId = ev.calendarId.toStdString();
-            msg.senderId = m_identity;
-            msg.payload = QString::fromUtf8(
-                QJsonDocument(ev.toJson()).toJson(QJsonDocument::Compact)).toStdString();
-            msg.timestamp = ev.updatedAt;
-            m_sync->sendMessage(ev.calendarId.toStdString(), msg);
-        }
-        return ev.id.toStdString();
-    }
-    return {};
+    json p = json::parse(eventJson, nullptr, false);
+    if (p.is_discarded() || !p.is_object() || !p.contains("id")) return "";
+    std::string calId = p.value("calendarId", std::string());
+    if (calId.empty()) return "";
+    std::string id = p["id"].get<std::string>();
+    p.erase("calendarId"); p.erase("creatorId");
+    publishAndApply(calId, mkEvent(scala::ET::EVENT_PUT, p));
+    return id;
 }
-
 bool ScalaImpl::deleteEvent(const std::string& id) {
-    auto ev = m_store->getEvent(QString::fromStdString(id));
-
-    // Ownership check: only creator can delete
-    if (!ev.id.isEmpty() && !ev.creatorId.isEmpty()
-        && ev.creatorId != QString::fromStdString(m_identity)) {
-        return false;  // not authorized
+    // find which calendar owns the event (fold each calendar).
+    for (const auto& c : m_store->calendars()) {
+        json f = scala::foldCalendar(c.id, m_store->log(c.id));
+        for (const auto& ev : f["events"])
+            if (ev.value("id", std::string()) == id) {
+                publishAndApply(c.id, mkEvent(scala::ET::EVENT_DEL, json{{"id", id}}));
+                return true;
+            }
     }
-
-    return m_store->deleteEvent(QString::fromStdString(id));
+    return false;
 }
-
 std::string ScalaImpl::listEvents(const std::string& calendarId) {
-    auto events = m_store->listEvents(QString::fromStdString(calendarId));
-    QJsonArray arr;
-    for (const auto& ev : events)
-        arr.append(ev.toJson());
-    return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact)).toStdString();
+    ensureDelivery();
+    json f = scala::foldCalendar(calendarId, m_store->log(calendarId));
+    return f["events"].dump();
 }
-
 std::string ScalaImpl::getEvent(const std::string& id) {
-    auto ev = m_store->getEvent(QString::fromStdString(id));
-    if (ev.id.isEmpty())
-        return {};
-    return QString::fromUtf8(
-        QJsonDocument(ev.toJson()).toJson(QJsonDocument::Compact)).toStdString();
+    for (const auto& c : m_store->calendars()) {
+        json f = scala::foldCalendar(c.id, m_store->log(c.id));
+        for (const auto& ev : f["events"]) if (ev.value("id", std::string()) == id) return ev.dump();
+    }
+    return "{}";
 }
+std::string ScalaImpl::searchEvents(const std::string& query) {
+    json out = json::array();
+    std::string q = query; for (auto& ch : q) ch = tolower(ch);
+    for (const auto& c : m_store->calendars()) {
+        json f = scala::foldCalendar(c.id, m_store->log(c.id));
+        for (const auto& ev : f["events"]) {
+            std::string hay = ev.value("title", std::string()) + " " + ev.value("description", std::string()) + " " + ev.value("location", std::string());
+            for (auto& ch : hay) ch = tolower(ch);
+            if (hay.find(q) != std::string::npos) out.push_back(ev);
+        }
+    }
+    return out.dump();
+}
+std::string ScalaImpl::getPendingReminders() { return "[]"; }
 
-// ── Sync API ─────────────────────────────────────────────────────────────────
-
+// ── sharing ──────────────────────────────────────────────────────────────────
 std::string ScalaImpl::shareCalendar(const std::string& calendarId) {
-    auto cal = m_store->getCalendar(QString::fromStdString(calendarId));
-    if (cal.id.isEmpty())
-        return {};
-
-    // Generate encryption key if not already shared
-    if (cal.encryptionKey.isEmpty()) {
-        cal.encryptionKey = QString::fromStdString(generateUuid())
-                          + QString::fromStdString(generateUuid());
-    }
-    cal.isShared = true;
-    cal.updatedAt = QDateTime::currentMSecsSinceEpoch();
-    m_store->saveCalendar(cal);
-
-    m_sync->startSync(cal.id.toStdString(), cal.encryptionKey.toStdString());
-    return cal.encryptionKey.toStdString();
+    return m_store->calendar(calendarId).key;
 }
-
-bool ScalaImpl::joinSharedCalendar(const std::string& calendarId,
-                                   const std::string& encryptionKey) {
-    if (calendarId.empty() || encryptionKey.empty())
-        return false;
-
-    QString qCalId = QString::fromStdString(calendarId);
-    QString qKey = QString::fromStdString(encryptionKey);
-
-    // Create local calendar entry if it doesn't exist
-    auto cal = m_store->getCalendar(qCalId);
-    if (cal.id.isEmpty()) {
-        cal.id = qCalId;
-        cal.name = "Shared Calendar";
-        cal.color = "#9C27B0";
-        cal.isShared = true;
-        cal.encryptionKey = qKey;
-        qint64 now = QDateTime::currentMSecsSinceEpoch();
-        cal.createdAt = now;
-        cal.updatedAt = now;
-        m_store->saveCalendar(cal);
-    } else {
-        cal.isShared = true;
-        cal.encryptionKey = qKey;
-        cal.updatedAt = QDateTime::currentMSecsSinceEpoch();
-        m_store->saveCalendar(cal);
-    }
-
-    m_sync->startSync(qCalId.toStdString(), qKey.toStdString());
-
-    // Request bulk sync from peers
-    SyncMessage msg;
-    msg.type = SyncMessageType::SyncEvents;
-    msg.calendarId = qCalId.toStdString();
-    msg.senderId = m_identity;
-    msg.timestamp = QDateTime::currentMSecsSinceEpoch();
-    m_sync->sendMessage(qCalId.toStdString(), msg);
-
+bool ScalaImpl::joinSharedCalendar(const std::string& calendarId, const std::string& encryptionKey) {
+    m_store->upsertCalendar({ calendarId, encryptionKey, "", "" });
+    m_sync->startSync(calendarId, encryptionKey);
+    return true;
+}
+std::string ScalaImpl::getSyncStatus(const std::string& calendarId) {
+    if (m_store->calendar(calendarId).id.empty()) return "not_shared";
+    return m_sync->isSyncing(calendarId) ? "syncing" : "offline";
+}
+std::string ScalaImpl::generateShareLink(const std::string& calendarId) {
+    scala::CalReg c = m_store->calendar(calendarId);
+    if (c.id.empty() || c.key.empty()) return "";
+    json f = scala::foldCalendar(c.id, m_store->log(c.id));
+    std::string nm = f.value("name", std::string()); if (nm.empty()) nm = c.name;
+    return "scala://join?id=" + urlEncode(c.id) + "&key=" + b64urlEncode(c.key) + "&name=" + urlEncode(nm);
+}
+std::string ScalaImpl::parseShareLink(const std::string& link) {
+    if (link.rfind("scala://join", 0) != 0) return "";
+    auto q = parseQuery(link);
+    std::string id = q["id"], key = b64urlDecode(q["key"]), name = q["name"];
+    if (id.empty() || key.empty()) return "";
+    return json{{"id", id}, {"key", key}, {"name", name}}.dump();
+}
+bool ScalaImpl::handleShareLink(const std::string& link) {
+    std::string parsed = parseShareLink(link);
+    if (parsed.empty()) return false;
+    json j = json::parse(parsed, nullptr, false);
+    std::string id = j.value("id", std::string()), key = j.value("key", std::string()), name = j.value("name", std::string());
+    if (id.empty() || key.empty()) return false;
+    m_store->upsertCalendar({ id, key, name, "" });
+    m_sync->startSync(id, key);
     return true;
 }
 
+// ── settings ─────────────────────────────────────────────────────────────────
+void ScalaImpl::setSetting(const std::string& key, const std::string& value) { m_store->kvSet("set:" + key, value); }
+std::string ScalaImpl::getSetting(const std::string& key, const std::string& def) {
+    std::string v = m_store->kvGet("set:" + key); return v.empty() ? def : v;
+}
+
+// ── QR (vendored qrcodegen → matrix; data: URIs are sandbox-blocked) ─────────
 std::string ScalaImpl::qrMatrix(const std::string& text) {
-    QJsonObject out;
-    if (text.empty()) {
-        out["ok"] = false; out["error"] = "empty";
-        return QString::fromUtf8(QJsonDocument(out).toJson(QJsonDocument::Compact)).toStdString();
-    }
+    json out;
+    if (text.empty()) { out["ok"] = false; out["error"] = "empty"; return out.dump(); }
     try {
         const qrcodegen::QrCode qr = qrcodegen::QrCode::encodeText(text.c_str(), qrcodegen::QrCode::Ecc::MEDIUM);
         const int n = qr.getSize();
-        QJsonArray cells;
-        for (int y = 0; y < n; ++y)
-            for (int x = 0; x < n; ++x) cells.append(qr.getModule(x, y) ? 1 : 0);
-        out["ok"] = true; out["n"] = n; out["cells"] = cells;
-    } catch (const std::exception& e) {
-        out["ok"] = false; out["error"] = QString("qr encode failed: ") + e.what();
-    }
-    return QString::fromUtf8(QJsonDocument(out).toJson(QJsonDocument::Compact)).toStdString();
+        json cells = json::array();
+        for (int y = 0; y < n; ++y) for (int x = 0; x < n; ++x) cells.push_back(qr.getModule(x, y) ? 1 : 0);
+        out["ok"] = true; out["n"] = n; out["cells"] = std::move(cells);
+    } catch (const std::exception& e) { out["ok"] = false; out["error"] = std::string("qr: ") + e.what(); }
+    return out.dump();
 }
 
+// ── diagnostics ──────────────────────────────────────────────────────────────
 std::string ScalaImpl::diagnostics() {
     ensureDelivery();
-    QJsonObject out;
-    out["identity"] = QString::fromStdString(m_identity);
+    json out;
+    out["identity"] = m_identity;
     out["ctxReady"] = m_ctxReady;
-    out["deliveryStatus"] = QString::fromStdString(m_deliveryStatus);
+    out["deliveryStatus"] = m_deliveryStatus;
     out["nodeReady"] = m_sync ? m_sync->ready() : false;
-    auto calendars = m_store->listCalendars();
-    QJsonArray calArr;
+    out["dataDir"] = m_store ? m_store->dataDir() : std::string();
+    json cals = json::array();
     int totalEvents = 0;
-    for (const auto& cal : calendars) {
-        auto events = m_store->listEvents(cal.id);
-        totalEvents += events.size();
-        QJsonObject c;
-        c["id"] = cal.id;
-        c["name"] = cal.name;
-        c["shared"] = cal.isShared;
-        c["syncing"] = m_sync ? m_sync->isSyncing(cal.id.toStdString()) : false;
-        c["events"] = static_cast<int>(events.size());
-        c["creatorId"] = cal.creatorId;
-        calArr.append(c);
+    for (const auto& c : m_store->calendars()) {
+        json f = scala::foldCalendar(c.id, m_store->log(c.id));
+        int n = (int)f["events"].size(); totalEvents += n;
+        std::string nm = f.value("name", std::string()); if (nm.empty()) nm = c.name;
+        cals.push_back(json{{"id", c.id}, {"name", nm}, {"shared", true},
+                            {"syncing", m_sync ? m_sync->isSyncing(c.id) : false}, {"events", n}});
     }
-    out["calendars"] = calArr;
-    out["calendarCount"] = static_cast<int>(calendars.size());
+    out["calendars"] = cals;
+    out["calendarCount"] = (int)m_store->calendars().size();
     out["eventCount"] = totalEvents;
-    out["dataDir"] = m_store ? m_store->dataDir() : QString();
-    return QString::fromUtf8(QJsonDocument(out).toJson(QJsonDocument::Compact)).toStdString();
+    return out.dump();
 }
 
-std::string ScalaImpl::getSyncStatus(const std::string& calendarId) {
-    auto cal = m_store->getCalendar(QString::fromStdString(calendarId));
-    if (cal.id.isEmpty() || !cal.isShared)
-        return "not_shared";
-
-    if (m_sync->isSyncing(cal.id.toStdString()))
-        return "syncing";
-
-    return "offline";
-}
-
-// ── Share link API ───────────────────────────────────────────────────────────
-
-std::string ScalaImpl::generateShareLink(const std::string& calendarId) {
-    auto cal = m_store->getCalendar(QString::fromStdString(calendarId));
-    if (cal.id.isEmpty())
-        return {};
-
-    // Ensure calendar is shared (generates key if needed)
-    if (!cal.isShared || cal.encryptionKey.isEmpty())
-        shareCalendar(calendarId);
-
-    // Re-read after shareCalendar may have updated the key
-    cal = m_store->getCalendar(cal.id);
-    if (cal.encryptionKey.isEmpty())
-        return {};
-
-    QByteArray base64Key = cal.encryptionKey.toUtf8().toBase64(
-        QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals);
-
-    QUrl url;
-    url.setScheme("scala");
-    url.setHost("join");
-
-    QUrlQuery query;
-    query.addQueryItem("id", cal.id);
-    query.addQueryItem("key", QString::fromLatin1(base64Key));
-    query.addQueryItem("name", cal.name);
-    url.setQuery(query);
-
-    return url.toString().toStdString();
-}
-
-std::string ScalaImpl::parseShareLink(const std::string& link) {
-    QUrl url(QString::fromStdString(link));
-    if (!url.isValid() || url.scheme() != "scala" || url.host() != "join")
-        return {};
-
-    QUrlQuery query(url);
-    QString id = query.queryItemValue("id");
-    QString base64Key = query.queryItemValue("key");
-    QString name = query.queryItemValue("name");
-
-    if (id.isEmpty() || base64Key.isEmpty())
-        return {};
-
-    QByteArray key = QByteArray::fromBase64(base64Key.toLatin1(),
-                                            QByteArray::Base64UrlEncoding
-                                            | QByteArray::OmitTrailingEquals);
-
-    QJsonObject result;
-    result["id"] = id;
-    result["key"] = QString::fromUtf8(key);
-    result["name"] = name;
-
-    return QString::fromUtf8(QJsonDocument(result).toJson(QJsonDocument::Compact)).toStdString();
-}
-
-bool ScalaImpl::handleShareLink(const std::string& link) {
-    std::string parsed = parseShareLink(link);
-    if (parsed.empty())
-        return false;
-
-    QJsonDocument doc = QJsonDocument::fromJson(QString::fromStdString(parsed).toUtf8());
-    QJsonObject obj = doc.object();
-
-    QString id = obj["id"].toString();
-    QString key = obj["key"].toString();
-    QString name = obj["name"].toString();
-
-    if (id.isEmpty() || key.isEmpty())
-        return false;
-
-    // If calendar doesn't exist yet, create with the shared name
-    auto cal = m_store->getCalendar(id);
-    if (cal.id.isEmpty() && !name.isEmpty()) {
-        cal.id = id;
-        cal.name = name;
-        cal.color = "#9C27B0";
-        cal.isShared = true;
-        cal.encryptionKey = key;
-        qint64 now = QDateTime::currentMSecsSinceEpoch();
-        cal.createdAt = now;
-        cal.updatedAt = now;
-        m_store->saveCalendar(cal);
-    }
-
-    return joinSharedCalendar(id.toStdString(), key.toStdString());
-}
-
-// ── Search API ───────────────────────────────────────────────────────────────
-
-std::string ScalaImpl::searchEvents(const std::string& query) {
-    if (query.empty())
-        return "[]";
-
-    QString qQuery = QString::fromStdString(query).trimmed();
-    if (qQuery.isEmpty())
-        return "[]";
-
-    QString lowerQuery = qQuery.toLower();
-    QJsonArray results;
-
-    auto calendars = m_store->listCalendars();
-    for (const auto& cal : calendars) {
-        auto events = m_store->listEvents(cal.id);
-        for (const auto& ev : events) {
-            if (ev.title.toLower().contains(lowerQuery)
-                || ev.description.toLower().contains(lowerQuery)
-                || ev.location.toLower().contains(lowerQuery)) {
-                QJsonObject obj = ev.toJson();
-                obj["calendarName"] = cal.name;
-                obj["calendarColor"] = cal.color;
-                results.append(obj);
-            }
-        }
-    }
-
-    return QString::fromUtf8(QJsonDocument(results).toJson(QJsonDocument::Compact)).toStdString();
-}
-
-// ── Reminders API ────────────────────────────────────────────────────────────
-
-std::string ScalaImpl::getPendingReminders() {
-    QJsonArray pending;
-    QDateTime now = QDateTime::currentDateTime();
-
-    auto calendars = m_store->listCalendars();
-    for (const auto& cal : calendars) {
-        auto events = m_store->listEvents(cal.id);
-        for (const auto& ev : events) {
-            if (ev.reminderMinutes < 0)
-                continue;
-
-            // Check if already reminded
-            QString reminderKey = "reminder:" + ev.id;
-            if (m_store->kvGet(reminderKey) == "fired")
-                continue;
-
-            // Check if event starts within the reminder window
-            qint64 msBefore = static_cast<qint64>(ev.reminderMinutes) * 60 * 1000;
-            QDateTime reminderTime = ev.startTime.addMSecs(-msBefore);
-            if (now >= reminderTime && now < ev.startTime) {
-                QJsonObject obj;
-                obj["id"] = ev.id;
-                obj["title"] = ev.title;
-                obj["startTime"] = ev.startTime.toMSecsSinceEpoch();
-                obj["calendarId"] = ev.calendarId;
-                pending.append(obj);
-
-                // Mark as fired
-                m_store->kvSet(reminderKey, "fired");
-            }
-        }
-    }
-
-    return QString::fromUtf8(QJsonDocument(pending).toJson(QJsonDocument::Compact)).toStdString();
-}
-
-// ── Settings API ─────────────────────────────────────────────────────────────
-
-void ScalaImpl::setSetting(const std::string& key, const std::string& value) {
-    m_store->kvSet("setting_" + QString::fromStdString(key),
-                   QString::fromStdString(value));
-}
-
-std::string ScalaImpl::getSetting(const std::string& key, const std::string& defaultValue) {
-    QString val = m_store->kvGet("setting_" + QString::fromStdString(key));
-    if (val.isEmpty())
-        return defaultValue;
-    return val.toStdString();
-}
-
-// ── Incoming sync messages ───────────────────────────────────────────────────
-
-void ScalaImpl::onSyncMessageReceived(const std::string& calendarId, const std::string& msgJson) {
-    // Parse the SyncMessage from JSON string
-    nlohmann::json obj = nlohmann::json::parse(msgJson);
-    SyncMessage msg = SyncMessage::fromJson(obj);
-
-    QString qCalId = QString::fromStdString(calendarId);
-
-    switch (msg.type) {
-    case SyncMessageType::CreateEvent: {
-        QJsonDocument evDoc = QJsonDocument::fromJson(QString::fromStdString(msg.payload).toUtf8());
-        scala::CalendarEvent ev = scala::CalendarEvent::fromJson(evDoc.object());
-        if (!ev.id.isEmpty()) {
-            m_store->saveEvent(ev);
-        }
-        break;
-    }
-    case SyncMessageType::UpdateEvent: {
-        QJsonDocument evDoc = QJsonDocument::fromJson(QString::fromStdString(msg.payload).toUtf8());
-        scala::CalendarEvent ev = scala::CalendarEvent::fromJson(evDoc.object());
-        if (!ev.id.isEmpty()) {
-            m_store->updateEvent(ev);
-        }
-        break;
-    }
-    case SyncMessageType::DeleteEvent: {
-        std::string eventId = msg.payload;
-        if (!eventId.empty()) {
-            m_store->deleteEvent(QString::fromStdString(eventId));
-        }
-        break;
-    }
-    case SyncMessageType::SyncEvents: {
-        // Peer is requesting bulk sync — send all events for this calendar
-        auto events = m_store->listEvents(qCalId);
-        for (const auto& ev : events) {
-            SyncMessage reply;
-            reply.type = SyncMessageType::CreateEvent;
-            reply.calendarId = qCalId.toStdString();
-            reply.senderId = m_identity;
-            reply.payload = QString::fromUtf8(
-                QJsonDocument(ev.toJson()).toJson(QJsonDocument::Compact)).toStdString();
-            reply.timestamp = QDateTime::currentMSecsSinceEpoch();
-            m_sync->sendMessage(qCalId.toStdString(), reply);
-        }
-        break;
-    }
-    case SyncMessageType::UnshareCalendar: {
-        m_sync->stopSync(qCalId.toStdString());
-        auto cal = m_store->getCalendar(qCalId);
-        if (!cal.id.isEmpty()) {
-            cal.isShared = false;
-            cal.encryptionKey.clear();
-            cal.updatedAt = QDateTime::currentMSecsSinceEpoch();
-            m_store->saveCalendar(cal);
-        }
-        break;
-    }
-    case SyncMessageType::CalendarReconnected: {
-        // Peer reconnected — no action needed
-        break;
-    }
-    }
-}
+// unused legacy hook (kept to satisfy the header declaration).
+void ScalaImpl::onSyncMessageReceived(const std::string&, const std::string&) {}

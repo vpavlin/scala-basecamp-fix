@@ -96,6 +96,12 @@ CalendarSync::CalendarSync() {}
 CalendarSync::~CalendarSync() {}
 
 void CalendarSync::setMessageHandler(OnMessageReceived h) { m_onMessage = std::move(h); }
+void CalendarSync::setEventHandler(OnEventReceived h) { m_onEvent = std::move(h); }
+void CalendarSync::sendEvent(const std::string &calendarId, const std::string &eventJson) {
+    if (!m_activeTopics.count(calendarId) || !m_tx || !m_tx->ready()) return;
+    std::string sealed = seal(calendarId, eventJson);
+    m_tx->send(topicForCalendar(calendarId), sealed);
+}
 void CalendarSync::setStatusHandler(OnSyncStatus h) { m_onStatus = std::move(h); }
 
 std::string CalendarSync::topicForCalendar(const std::string &calendarId) {
@@ -245,9 +251,9 @@ void CalendarSync::handleReceive(const std::string &topic, const std::string &se
                 return;
             }
 
-            // Parse and dispatch
-            SyncMessage msg = SyncMessage::fromBytes(*plain);
-            if (m_onMessage) m_onMessage(calendarId, msg);
+            // CRDT: hand the raw decrypted event JSON to the event handler.
+            if (m_onEvent) { m_onEvent(calendarId, *plain); return; }
+            if (m_onMessage) { m_onMessage(calendarId, SyncMessage::fromBytes(*plain)); }
             return;
         }
     }

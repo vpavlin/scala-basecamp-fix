@@ -1,67 +1,44 @@
 #pragma once
+// CalendarStore — CRDT log storage, modeled on qaku_persist_std. A calendar is a
+// membership entry (id + key) in the registry; its state lives in an append-only
+// EVENT LOG (one channel per calendar). Reads fold the log (scala_engine). Plain
+// files under a stable $HOME data dir, robust no-throw:
+//     <dataDir>/calendars.json     – registry: [{id,key,name,color}] (membership)
+//     <dataDir>/logs/<calId>.json  – that calendar's append-only event log
+//     <dataDir>/kv.json            – identity / device id / settings
+#include "scala_engine.hpp"
+#include <string>
+#include <vector>
 
-// CalendarStore — direct file-based persistence, modeled on qaku_core's proven
-// qaku_persist_std storage (plain files in the data dir, robust no-throw readers).
-// The previous implementation layered a Qt KV store + per-namespace key prefixes
-// + id-index files; that indirection is what silently lost calendars across a
-// restart. This version keeps everything in-memory and mirrors it to three JSON
-// files under a STABLE $HOME data dir:
-//     <dataDir>/calendars.json   – array of Calendar objects
-//     <dataDir>/events.json      – array of CalendarEvent objects
-//     <dataDir>/kv.json          – small key/value map (identity, settings)
-// Every mutation writes its file atomically (temp + rename). A missing/corrupt
-// file loads as empty and never throws — a bad file can't crash the module.
-#include "types.h"
-
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QMap>
-#include <QString>
-#include <QStringList>
+namespace scala {
+struct CalReg { std::string id, key, name, color; };
+}
 
 class CalendarStore {
 public:
     CalendarStore();
-    ~CalendarStore() = default;
 
-    // ── Calendar CRUD ────────────────────────────────────────────────────────
-    QString saveCalendar(const scala::Calendar &cal);
-    scala::Calendar getCalendar(const QString &id) const;
-    QList<scala::Calendar> listCalendars() const;
-    bool deleteCalendar(const QString &id);
+    std::string dataDir() const { return m_dataDir; }
 
-    // ── Event CRUD ───────────────────────────────────────────────────────────
-    QString saveEvent(const scala::CalendarEvent &ev);
-    scala::CalendarEvent getEvent(const QString &id) const;
-    QList<scala::CalendarEvent> listEvents(const QString &calendarId) const;
-    bool updateEvent(const scala::CalendarEvent &ev);
-    bool deleteEvent(const QString &id);
+    // ── registry (membership) ────────────────────────────────────────────────
+    std::vector<scala::CalReg> calendars() const;
+    scala::CalReg calendar(const std::string& id) const;   // empty id if unknown
+    void upsertCalendar(const scala::CalReg& r);
+    void removeCalendar(const std::string& id);            // + delete its log
 
-    // KV helpers (identity + settings)
-    void kvSet(const QString &key, const QString &value) const;
-    QString kvGet(const QString &key) const;
-    void kvRemove(const QString &key) const;
+    // ── per-calendar event log ──────────────────────────────────────────────
+    std::vector<scala::Event> log(const std::string& calId) const;
+    // Merge one event into the log (dedup by id), persist. Returns true if NEW.
+    bool appendEvent(const std::string& calId, const scala::Event& e);
 
-    // Where state is persisted (surfaced in diagnostics).
-    QString dataDir() const { return m_dataDir; }
-
-    // Kept for API compatibility — a no-op now. Multi-instance isolation is via the
-    // SCALA_CORE_DATA env var (a distinct data dir), not a key-prefix namespace.
-    void setNamespace(const QString &) {}
+    // ── kv (identity, device id, settings) ──────────────────────────────────
+    std::string kvGet(const std::string& key) const;
+    void kvSet(const std::string& key, const std::string& value);
 
 private:
-    QString m_dataDir;
-    // In-memory authoritative state, mirrored to the JSON files on every write.
-    QMap<QString, scala::Calendar> m_calendars;
-    QMap<QString, scala::CalendarEvent> m_events;
-    mutable QMap<QString, QString> m_kv;
-
-    void load();
-    void writeCalendars() const;
-    void writeEvents() const;
-    void writeKv() const;
-    // Atomic JSON file write (temp + rename); robust JSON read (empty on missing/bad).
-    static void writeJsonFile(const QString &path, const QJsonDocument &doc);
-    static QJsonDocument readJsonFile(const QString &path);
+    std::string m_dataDir;
+    std::string calFile() const;
+    std::string logFile(const std::string& id) const;
+    std::string kvFile() const;
+    void writeLog(const std::string& calId, const std::vector<scala::Event>& evs) const;
 };
