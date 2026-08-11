@@ -1,0 +1,8 @@
+node_modules/
+android/
+.expo/
+*.apk
+package-lock.json
+# arm64 liblogosdelivery .so set — 36M, provided at build time (see PLAN.md),
+# not tracked. Copy from a sibling app's mobile/native before `expo prebuild`.
+native/

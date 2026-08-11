@@ -1,0 +1,5 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": { "strict": true, "jsx": "react-native" },
+  "exclude": ["node_modules", "src/lib/logos-transport-pkg/examples"]
+}

@@ -1,0 +1,24 @@
+{
+  "expo": {
+    "name": "Scala",
+    "slug": "scala",
+    "scheme": "scala",
+    "version": "0.1.0",
+    "platforms": ["android"],
+    "icon": "./assets/icon.png",
+    "android": {
+      "package": "xyz.vpavlin.scala",
+      "versionCode": 1
+    },
+    "plugins": [
+      "./plugins/withLogosDelivery",
+      "./plugins/withReleaseSigning",
+      "expo-secure-store",
+      "expo-camera",
+      "./src/lib/logos-transport-pkg/plugins/withDeliveryClient.js"
+    ],
+    "extra": {
+      "comment": "versionCode here is source of truth; assert it matches android/app/build.gradle after prebuild."
+    }
+  }
+}
