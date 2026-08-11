@@ -1,256 +1,155 @@
 #include "calendar_store.h"
 
-#ifdef LOGOS_CORE_AVAILABLE
-#include <logos_api_client.h>
-#endif
+#include <QDir>
+#include <QFile>
+#include <QSaveFile>
+#include <QByteArray>
 
-#include <QDebug>
-#include <QJsonDocument>
-#include <QStandardPaths>
-
-// ── Construction / Destruction ───────────────────────────────────────────────
+// Stable, writable data dir — the qaku pattern ($HOME/.qaku-core). NOT
+// QStandardPaths::AppDataLocation (which resolves under the transient AppImage
+// mount in the Basecamp sandbox — a different path every launch). Override with
+// SCALA_CORE_DATA for multi-instance / tests.
+static QString computeDataDir() {
+    QByteArray env = qgetenv("SCALA_CORE_DATA");
+    if (!env.isEmpty())
+        return QString::fromUtf8(env);
+    QByteArray home = qgetenv("HOME");
+    return (home.isEmpty() ? QStringLiteral("/tmp") : QString::fromUtf8(home)) + QStringLiteral("/.scala-core");
+}
 
 CalendarStore::CalendarStore() {
-    m_storage = new LocalStorage();  // no parent — CalendarStore manages lifetime
-    qDebug() << "CalendarStore: initialized LocalStorage at" << m_storage->storagePath()
-             << "(" << m_storage->count() << "existing keys)";
+    m_dataDir = computeDataDir();
+    QDir().mkpath(m_dataDir);
+    load();
 }
 
-CalendarStore::~CalendarStore() {
-    delete m_storage;
+// ── robust JSON file I/O (never throws) ──────────────────────────────────────
+void CalendarStore::writeJsonFile(const QString &path, const QJsonDocument &doc) {
+    QSaveFile f(path);                       // QSaveFile = atomic (temp + commit)
+    if (!f.open(QIODevice::WriteOnly))
+        return;
+    f.write(doc.toJson(QJsonDocument::Compact));
+    f.commit();
 }
 
-#ifdef LOGOS_CORE_AVAILABLE
-void CalendarStore::setClient(LogosAPIClient *client) {
-    m_kvClient = client;
-    qDebug() << "CalendarStore: kv_module client set (cross-module access enabled)";
-}
-#endif
-
-// ── Namespace ────────────────────────────────────────────────────────────────
-
-void CalendarStore::setNamespace(const QString &ns) {
-    m_namespace = ns.isEmpty() ? QStringLiteral("default") : ns;
-}
-QString CalendarStore::dataDir() const {
-    return m_storage ? m_storage->dataDir() : QString();
-}
-
-
-QString CalendarStore::namespacedKey(const QString &key) const {
-    return QStringLiteral("scala:") + m_namespace + QStringLiteral(":") + key;
-}
-
-// ── KV helpers ───────────────────────────────────────────────────────────────
-// Always use LocalStorage (file-based). Optionally sync to kv_module when available.
-
-void CalendarStore::kvSet(const QString &key, const QString &value) const {
-    const QString nsKey = namespacedKey(key);
-
-    // Primary: always write to LocalStorage (persistent)
-    m_storage->set(nsKey, value);
-
-    // Secondary: also sync to kv_module if available (cross-module access)
-#ifdef LOGOS_CORE_AVAILABLE
-    if (m_kvClient) {
-        m_kvClient->invokeRemoteMethod("kv_module", "set",
-                                       QString(KV_NS), nsKey, value);
-    }
-#endif
-}
-
-QString CalendarStore::kvGet(const QString &key) const {
-    const QString nsKey = namespacedKey(key);
-
-    // Primary: always read from LocalStorage (source of truth)
-    QString value = m_storage->get(nsKey);
-    if (!value.isEmpty())
-        return value;
-
-    // Fallback: try kv_module (in case data was written by another module)
-#ifdef LOGOS_CORE_AVAILABLE
-    if (m_kvClient) {
-        QVariant result = m_kvClient->invokeRemoteMethod("kv_module", "get",
-                                                         QString(KV_NS), nsKey);
-        return result.toString();
-    }
-#endif
-    return {};
-}
-
-void CalendarStore::kvRemove(const QString &key) const {
-    const QString nsKey = namespacedKey(key);
-
-    // Primary: always remove from LocalStorage
-    m_storage->remove(nsKey);
-
-    // Secondary: also remove from kv_module if available
-#ifdef LOGOS_CORE_AVAILABLE
-    if (m_kvClient) {
-        m_kvClient->invokeRemoteMethod("kv_module", "remove",
-                                       QString(KV_NS), nsKey);
-    }
-#endif
-}
-
-// ── Index helpers ────────────────────────────────────────────────────────────
-
-QStringList CalendarStore::getIndex(const QString &indexKey) const {
-    QString raw = kvGet(indexKey);
-    if (raw.isEmpty())
+QJsonDocument CalendarStore::readJsonFile(const QString &path) {
+    QFile f(path);
+    if (!f.exists() || !f.open(QIODevice::ReadOnly))
         return {};
-
-    QJsonDocument doc = QJsonDocument::fromJson(raw.toUtf8());
-    QStringList ids;
-    for (const auto &v : doc.array())
-        ids.append(v.toString());
-    return ids;
+    const QByteArray raw = f.readAll();
+    f.close();
+    QJsonParseError err{};
+    QJsonDocument doc = QJsonDocument::fromJson(raw, &err);   // no-throw
+    if (err.error != QJsonParseError::NoError)
+        return {};
+    return doc;
 }
 
-void CalendarStore::setIndex(const QString &indexKey, const QStringList &ids) const {
-    QJsonArray arr;
-    for (const auto &id : ids)
-        arr.append(id);
-    kvSet(indexKey, QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact)));
-}
-
-void CalendarStore::addToIndex(const QString &indexKey, const QString &id) const {
-    QStringList ids = getIndex(indexKey);
-    if (!ids.contains(id)) {
-        ids.append(id);
-        setIndex(indexKey, ids);
+void CalendarStore::load() {
+    // calendars.json
+    QJsonDocument cd = readJsonFile(m_dataDir + QStringLiteral("/calendars.json"));
+    if (cd.isArray()) {
+        for (const QJsonValue &v : cd.array()) {
+            if (!v.isObject()) continue;
+            scala::Calendar c = scala::Calendar::fromJson(v.toObject());
+            if (!c.id.isEmpty()) m_calendars.insert(c.id, c);
+        }
+    }
+    // events.json
+    QJsonDocument ed = readJsonFile(m_dataDir + QStringLiteral("/events.json"));
+    if (ed.isArray()) {
+        for (const QJsonValue &v : ed.array()) {
+            if (!v.isObject()) continue;
+            scala::CalendarEvent e = scala::CalendarEvent::fromJson(v.toObject());
+            if (!e.id.isEmpty()) m_events.insert(e.id, e);
+        }
+    }
+    // kv.json
+    QJsonDocument kd = readJsonFile(m_dataDir + QStringLiteral("/kv.json"));
+    if (kd.isObject()) {
+        const QJsonObject o = kd.object();
+        for (auto it = o.constBegin(); it != o.constEnd(); ++it)
+            m_kv.insert(it.key(), it.value().toString());
     }
 }
 
-void CalendarStore::removeFromIndex(const QString &indexKey, const QString &id) const {
-    QStringList ids = getIndex(indexKey);
-    ids.removeAll(id);
-    setIndex(indexKey, ids);
+void CalendarStore::writeCalendars() const {
+    QJsonArray arr;
+    for (const scala::Calendar &c : m_calendars) arr.append(c.toJson());
+    writeJsonFile(m_dataDir + QStringLiteral("/calendars.json"), QJsonDocument(arr));
+}
+void CalendarStore::writeEvents() const {
+    QJsonArray arr;
+    for (const scala::CalendarEvent &e : m_events) arr.append(e.toJson());
+    writeJsonFile(m_dataDir + QStringLiteral("/events.json"), QJsonDocument(arr));
+}
+void CalendarStore::writeKv() const {
+    QJsonObject o;
+    for (auto it = m_kv.constBegin(); it != m_kv.constEnd(); ++it) o.insert(it.key(), it.value());
+    writeJsonFile(m_dataDir + QStringLiteral("/kv.json"), QJsonDocument(o));
 }
 
 // ── Calendar CRUD ────────────────────────────────────────────────────────────
-
 QString CalendarStore::saveCalendar(const scala::Calendar &cal) {
-    QString key = QStringLiteral("calendar:") + cal.id;
-    QString json = QString::fromUtf8(
-        QJsonDocument(cal.toJson()).toJson(QJsonDocument::Compact));
-    kvSet(key, json);
-    addToIndex(QStringLiteral("calendars"), cal.id);
+    m_calendars.insert(cal.id, cal);
+    writeCalendars();
     return cal.id;
 }
-
 scala::Calendar CalendarStore::getCalendar(const QString &id) const {
-    QString key = QStringLiteral("calendar:") + id;
-    QString raw = kvGet(key);
-    if (raw.isEmpty())
-        return {};
-
-    QJsonDocument doc = QJsonDocument::fromJson(raw.toUtf8());
-    return scala::Calendar::fromJson(doc.object());
+    return m_calendars.value(id);   // default-constructed (empty id) if missing
 }
-
 QList<scala::Calendar> CalendarStore::listCalendars() const {
-    QStringList ids = getIndex(QStringLiteral("calendars"));
-    QList<scala::Calendar> result;
-    for (const auto &id : ids) {
-        auto cal = getCalendar(id);
-        if (!cal.id.isEmpty())
-            result.append(cal);
-    }
-    return result;
+    return m_calendars.values();
 }
-
 bool CalendarStore::deleteCalendar(const QString &id) {
-    QString key = QStringLiteral("calendar:") + id;
-    QString raw = kvGet(key);
-    if (raw.isEmpty())
-        return false;
-
-    // Delete all events in this calendar
-    QStringList eventIds = getIndex(QStringLiteral("events:") + id);
-    for (const auto &eid : eventIds)
-        kvRemove(QStringLiteral("event:") + id + QStringLiteral(":") + eid);
-    kvRemove(QStringLiteral("events:") + id);
-
-    kvRemove(key);
-    removeFromIndex(QStringLiteral("calendars"), id);
+    if (!m_calendars.contains(id)) return false;
+    m_calendars.remove(id);
+    // drop its events too
+    for (auto it = m_events.begin(); it != m_events.end();) {
+        if (it.value().calendarId == id) it = m_events.erase(it);
+        else ++it;
+    }
+    writeCalendars();
+    writeEvents();
     return true;
 }
 
-// ── Event CRUD ───────────────────────────────────────────────────────────────
-
+// ── Event CRUD ─────────────────────────────────────────────────────────────
 QString CalendarStore::saveEvent(const scala::CalendarEvent &ev) {
-    QString key = QStringLiteral("event:") + ev.calendarId +
-                  QStringLiteral(":") + ev.id;
-    QString json = QString::fromUtf8(
-        QJsonDocument(ev.toJson()).toJson(QJsonDocument::Compact));
-    kvSet(key, json);
-    addToIndex(QStringLiteral("events:") + ev.calendarId, ev.id);
+    m_events.insert(ev.id, ev);
+    writeEvents();
     return ev.id;
 }
-
 scala::CalendarEvent CalendarStore::getEvent(const QString &id) const {
-    // We need to find which calendar this event belongs to
-    QString calendarId = findCalendarIdForEvent(id);
-    if (calendarId.isEmpty())
-        return {};
-
-    QString key = QStringLiteral("event:") + calendarId +
-                  QStringLiteral(":") + id;
-    QString raw = kvGet(key);
-    if (raw.isEmpty())
-        return {};
-
-    QJsonDocument doc = QJsonDocument::fromJson(raw.toUtf8());
-    return scala::CalendarEvent::fromJson(doc.object());
+    return m_events.value(id);
 }
-
 QList<scala::CalendarEvent> CalendarStore::listEvents(const QString &calendarId) const {
-    QStringList ids = getIndex(QStringLiteral("events:") + calendarId);
-    QList<scala::CalendarEvent> result;
-    for (const auto &id : ids) {
-        QString key = QStringLiteral("event:") + calendarId +
-                      QStringLiteral(":") + id;
-        QString raw = kvGet(key);
-        if (raw.isEmpty())
-            continue;
-        QJsonDocument doc = QJsonDocument::fromJson(raw.toUtf8());
-        result.append(scala::CalendarEvent::fromJson(doc.object()));
-    }
-    return result;
+    QList<scala::CalendarEvent> out;
+    for (const scala::CalendarEvent &e : m_events)
+        if (e.calendarId == calendarId) out.append(e);
+    return out;
 }
-
 bool CalendarStore::updateEvent(const scala::CalendarEvent &ev) {
-    QString key = QStringLiteral("event:") + ev.calendarId +
-                  QStringLiteral(":") + ev.id;
-    QString existing = kvGet(key);
-    if (existing.isEmpty())
-        return false;
-
-    QString json = QString::fromUtf8(
-        QJsonDocument(ev.toJson()).toJson(QJsonDocument::Compact));
-    kvSet(key, json);
+    m_events.insert(ev.id, ev);
+    writeEvents();
     return true;
 }
-
 bool CalendarStore::deleteEvent(const QString &id) {
-    QString calendarId = findCalendarIdForEvent(id);
-    if (calendarId.isEmpty())
-        return false;
-
-    QString key = QStringLiteral("event:") + calendarId +
-                  QStringLiteral(":") + id;
-    kvRemove(key);
-    removeFromIndex(QStringLiteral("events:") + calendarId, id);
+    if (!m_events.contains(id)) return false;
+    m_events.remove(id);
+    writeEvents();
     return true;
 }
 
-QString CalendarStore::findCalendarIdForEvent(const QString &eventId) const {
-    QStringList calIds = getIndex(QStringLiteral("calendars"));
-    for (const auto &calId : calIds) {
-        QStringList eventIds = getIndex(QStringLiteral("events:") + calId);
-        if (eventIds.contains(eventId))
-            return calId;
-    }
-    return {};
+// ── KV (identity + settings) ─────────────────────────────────────────────────
+void CalendarStore::kvSet(const QString &key, const QString &value) const {
+    m_kv.insert(key, value);
+    writeKv();
+}
+QString CalendarStore::kvGet(const QString &key) const {
+    return m_kv.value(key);
+}
+void CalendarStore::kvRemove(const QString &key) const {
+    m_kv.remove(key);
+    writeKv();
 }
