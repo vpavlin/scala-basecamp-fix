@@ -229,7 +229,11 @@ void ScalaImpl::setNamespace(const std::string&) { /* isolation is via SCALA_COR
 
 // ── calendars ────────────────────────────────────────────────────────────────
 std::string ScalaImpl::createCalendar(const std::string& name, const std::string& color) {
-    std::string id = generateUuid();
+    // Guard against ever reusing a calendar id. With the seeded RNG a collision is
+    // ~2^-122 (never), but a duplicate id would silently share a log/key with an
+    // existing calendar — regenerate until unambiguously fresh.
+    std::string id;
+    do { id = generateUuid(); } while (!m_store->calendar(id).id.empty());
     std::string key = generateUuid() + generateUuid();   // 72-char dashed, same as mobile
     m_store->upsertCalendar({ id, key, name, color });
     m_sync->startSync(id, key);

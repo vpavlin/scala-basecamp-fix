@@ -173,6 +173,13 @@ Item {
                                 text: "share"; color: Theme.palette.primary; font.pixelSize: 12
                                 MouseArea { anchors.fill: parent; onClicked: root.openShare(modelData) }
                             }
+                            LogosText {
+                                text: "✕"; color: Theme.palette.textTertiary; font.pixelSize: 14
+                                MouseArea {
+                                    anchors.fill: parent; anchors.margins: -4
+                                    onClicked: root.confirmDeleteCalendar(modelData)
+                                }
+                            }
                         }
                         MouseArea { anchors.fill: parent; z: -1; onClicked: root.filterCalId = modelData.id }
                     }
@@ -524,6 +531,39 @@ Item {
                 Item { Layout.fillWidth: true }
                 LogosButton { text: "Copy"; onClicked: { shareLink.selectAll(); shareLink.copy() } }
                 LogosButton { text: "Close"; onClicked: sharePopup.close() }
+            }
+        }
+    }
+
+    // ── delete calendar (with confirm) ─────────────────────────────────────────
+    property var pendingDeleteCal: null
+    function confirmDeleteCalendar(cal) { pendingDeleteCal = cal; deletePopup.open() }
+    function deleteCalendar() {
+        if (!pendingDeleteCal) return
+        var id = pendingDeleteCal.id
+        core("deleteCalendar", [id])
+        if (filterCalId === id) filterCalId = ""
+        pendingDeleteCal = null
+        deletePopup.close()
+        refresh()
+    }
+    Popup {
+        id: deletePopup
+        anchors.centerIn: Overlay.overlay
+        width: 380; modal: true; padding: Theme.spacing.large
+        background: Rectangle { radius: Theme.spacing.radiusMedium; color: Theme.palette.backgroundElevated; border.width: 1; border.color: Theme.palette.borderHairline }
+        ColumnLayout {
+            anchors.fill: parent; spacing: Theme.spacing.small
+            LogosText { text: "Delete calendar?"; color: Theme.palette.text; font.pixelSize: 18; font.weight: Theme.typography.weightMedium }
+            LogosText {
+                text: "Remove \"" + (root.pendingDeleteCal ? (root.pendingDeleteCal.name || "calendar") : "") + "\" from this device. Its local events are deleted. Peers who joined keep their own copy."
+                color: Theme.palette.textTertiary; font.pixelSize: 12; wrapMode: Text.WordWrap; Layout.fillWidth: true
+            }
+            RowLayout {
+                Layout.fillWidth: true; Layout.topMargin: Theme.spacing.small
+                Item { Layout.fillWidth: true }
+                LogosButton { text: "Cancel"; onClicked: { root.pendingDeleteCal = null; deletePopup.close() } }
+                LogosButton { text: "Delete"; onClicked: root.deleteCalendar() }
             }
         }
     }

@@ -230,7 +230,7 @@ export default function App() {
         <EventModal
           visible={modal.open}
           initial={modal.draft}
-          calendars={writable.map((c) => ({ id: c.id, name: c.name, color: c.color }))}
+          calendars={writable.map((c) => ({ id: c.id, name: c.name, color: colorForId(c.id) }))}
           calendarId={modal.calId}
           onPickCalendar={(id) => setModal((m) => ({ ...m, calId: id }))}
           canPickCalendar={!modal.editing}
