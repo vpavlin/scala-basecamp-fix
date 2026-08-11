@@ -353,15 +353,15 @@ Item {
 
                 LogosText {
                     text: "Scala Calendar"
-                    font.pixelSize: Theme.typography.headingSmall
-                    font.weight: Theme.typography.weightBold
+                    font.pixelSize: 18
+                    font.weight: Font.Bold
                     color: "#cdd6f4"
                 }
 
                 LogosText {
                     readonly property string ident: (root.ready && root.backend) ? root.currentIdentity : ""
                     text: ident.length > 0 ? "ID: " + ident.substring(0,8) + "..." : ""
-                    font.pixelSize: Theme.typography.caption
+                    font.pixelSize: 12
                     color: "#9399b2"
                     visible: text !== ""
                 }
@@ -393,6 +393,17 @@ Item {
                         eventModal.clear();
                         eventModal.calendars = calendarList;
                         eventModal.open();
+                    }
+                }
+
+                // ── Join calendar button (opens the share dialog on the Join tab) ──
+                LogosButton {
+                    text: "Join"
+                    onClicked: {
+                        shareDialog.calendarName = "";
+                        shareDialog.shareLink = "";
+                        shareDialog.open();
+                        if (shareDialog.tabBar) shareDialog.tabBar.currentIndex = 1;
                     }
                 }
 
@@ -468,9 +479,9 @@ Item {
 
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: Theme.spacing.large
-                        anchors.rightMargin: Theme.spacing.large
-                        spacing: Theme.spacing.medium
+                        anchors.leftMargin: 16
+                        anchors.rightMargin: 16
+                        spacing: 12
 
                         Rectangle {
                             width: 10; height: 10; radius: 5
@@ -484,8 +495,8 @@ Item {
 
                             LogosText {
                                 text: modelData.title || ""
-                                font.pixelSize: Theme.typography.bodyText
-                                font.weight: Theme.typography.weightMedium
+                                font.pixelSize: 14
+                                font.weight: Font.Medium
                                 color: "#cdd6f4"
                             }
                             LogosText {
@@ -499,7 +510,7 @@ Item {
                                         parts.push(modelData.calendarName)
                                     return parts.join(" \u2022 ")
                                 }
-                                font.pixelSize: Theme.typography.caption
+                                font.pixelSize: 12
                                 color: "#9399b2"
                             }
                         }
@@ -584,8 +595,8 @@ Item {
 
                             RowLayout {
                                 anchors.fill: parent
-                                anchors.leftMargin: Theme.spacing.medium
-                                anchors.rightMargin: Theme.spacing.medium
+                                anchors.leftMargin: 12
+                                anchors.rightMargin: 12
 
                                 LogosIconButton {
                                     onClicked: goToPrevWeek()
@@ -595,8 +606,8 @@ Item {
 
                                 LogosText {
                                     text: weekRangeLabel()
-                                    font.pixelSize: Theme.typography.bodyText
-                                    font.weight: Theme.typography.weightBold
+                                    font.pixelSize: 14
+                                    font.weight: Font.Bold
                                     color: "#cdd6f4"
                                     horizontalAlignment: Text.AlignHCenter
                                 }
@@ -776,8 +787,8 @@ Item {
 
                             RowLayout {
                                 anchors.fill: parent
-                                anchors.leftMargin: Theme.spacing.medium
-                                anchors.rightMargin: Theme.spacing.medium
+                                anchors.leftMargin: 12
+                                anchors.rightMargin: 12
 
                                 LogosIconButton {
                                     onClicked: goToPrevDay()
@@ -793,8 +804,8 @@ Item {
 
                                 LogosText {
                                     text: dayViewLabel()
-                                    font.pixelSize: Theme.typography.bodyText
-                                    font.weight: Theme.typography.weightBold
+                                    font.pixelSize: 14
+                                    font.weight: Font.Bold
                                     color: "#cdd6f4"
                                     horizontalAlignment: Text.AlignHCenter
                                 }

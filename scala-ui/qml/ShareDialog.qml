@@ -17,6 +17,7 @@ Popup {
     property string shareLink: ""
     property string qrDataUrl: ""
     property string calendarName: ""
+    property alias tabBar: tabBar   // so callers can preselect Share/Join
 
     signal joinRequested(string link)
 
