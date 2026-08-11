@@ -174,11 +174,20 @@ public:
         if (m_cfg.hubMode && m_delay) m_delay(1500, startNode); else startNode();
     }
 
-    // Join one topic (subscribe + create the SDS channel, or a plain subscription in raw
-    // mode). channelId == contentTopic == the topic.
+    // Join one topic. channelId == contentTopic == the topic.
+    // SDS Reliable Channels: SUBSCRIBE the content topic **then** channelCreate.
+    // channelCreate does NOT itself subscribe the content topic, and the delivery
+    // recv service only emits onChannelMessageReceived for SUBSCRIBED topics — so
+    // without this subscribe the channel is created, messages arrive at the relay/
+    // filter layer, but the app's receive callback never fires (proven in qaku_core:
+    // subscribeAsync THEN channelCreateAsync). Raw mode is a plain subscription.
     void join(const std::string &topic) {
-        if (m_cfg.useChannels) { if (m_ops.channelCreate) m_ops.channelCreate(topic, topic, m_cfg.deviceId, noop()); }
-        else                   { if (m_ops.subscribe)     m_ops.subscribe(topic, noop()); }
+        if (m_cfg.useChannels) {
+            if (m_ops.subscribe)     m_ops.subscribe(topic, noop());       // gate: recv service needs this
+            if (m_ops.channelCreate) m_ops.channelCreate(topic, topic, m_cfg.deviceId, noop());
+        } else {
+            if (m_ops.subscribe)     m_ops.subscribe(topic, noop());
+        }
     }
 
     // Publish sealed bytes. Encapsulates the double-base64 framing + the array/string
