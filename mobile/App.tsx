@@ -15,6 +15,9 @@ import { deliveryAvailable } from "./src/lib/scala-sync";
 import { MonthGrid } from "./src/components/MonthGrid";
 import { EventModal, EventDraft } from "./src/components/EventModal";
 import { Drawer } from "./src/components/Drawer";
+import { QRModal } from "./src/components/QRModal";
+import { ScanModal } from "./src/components/ScanModal";
+import * as Clipboard from "expo-clipboard";
 
 const C = {
   bg: "#1e1e2e", surface: "#2a2a3c", text: "#cdd6f4", sub: "#9399b2",
@@ -45,6 +48,8 @@ export default function App() {
   const [newCalName, setNewCalName] = useState("");
   const [invite, setInvite] = useState("");
   const [lastInvite, setLastInvite] = useState("");
+  const [qr, setQr] = useState<{ value: string; title: string } | null>(null);
+  const [scanning, setScanning] = useState(false);
 
   const refresh = useCallback(async () => {
     setCals(await store.listCalendars());
@@ -93,6 +98,16 @@ export default function App() {
     const cal = await createCalendar(newCalName || "My calendar");
     setNewCalName(""); setLastInvite(buildInvite(cal));
     await startSyncing(undefined, setStatus);
+    setQr({ value: buildInvite(cal), title: cal.name }); // show the QR right away
+  };
+  const showShare = (cal: Calendar) => { setLastInvite(buildInvite(cal)); setQr({ value: buildInvite(cal), title: cal.name }); };
+  const copyInvite = async (link: string) => { await Clipboard.setStringAsync(link); Alert.alert("Copied", "Invite link copied to clipboard."); };
+  const onScanned = async (data: string) => {
+    setScanning(false);
+    const cal = await joinFromInvite(data.trim());
+    if (!cal) { Alert.alert("Not a Scala invite", "That QR isn't a scala://join link."); return; }
+    await startSyncing(undefined, setStatus);
+    Alert.alert("Joined", `Syncing "${cal.name}"`);
   };
   const doJoin = async () => {
     const cal = await joinFromInvite(invite.trim());
@@ -172,7 +187,7 @@ export default function App() {
                 <View key={c.id} style={s.calRow}>
                   <View style={[s.dot, { backgroundColor: c.color }]} />
                   <Text style={s.calName}>{c.name}</Text>
-                  {c.encryptionKey ? <Pressable onPress={() => setLastInvite(buildInvite(c))}><Text style={s.share}>Share</Text></Pressable> : <Text style={s.sub}>local</Text>}
+                  {c.encryptionKey ? <Pressable onPress={() => showShare(c)}><Text style={s.share}>Share</Text></Pressable> : <Text style={s.sub}>local</Text>}
                 </View>
               ))}
 
@@ -182,21 +197,35 @@ export default function App() {
                 <Pressable style={s.smBtn} onPress={doCreateCal}><Text style={s.smBtnT}>Add</Text></Pressable>
               </View>
 
-              <Text style={s.pLabel}>Join via invite</Text>
+              <Text style={s.pLabel}>Join a calendar</Text>
               <View style={s.row}>
                 <TextInput style={[s.input, { flex: 1 }]} value={invite} onChangeText={setInvite} placeholder="scala://join?…" placeholderTextColor={C.sub} autoCapitalize="none" />
                 <Pressable style={s.smBtn} onPress={doJoin}><Text style={s.smBtnT}>Join</Text></Pressable>
               </View>
+              <Pressable style={[s.smBtn, { marginTop: 8, alignItems: "center" }]} onPress={() => setScanning(true)}>
+                <Text style={s.smBtnT}>Scan QR code</Text>
+              </Pressable>
 
               {!!lastInvite && (
                 <View style={{ marginTop: 12 }}>
-                  <Text style={s.sub}>Invite (long-press to copy):</Text>
+                  <Text style={s.sub}>Last invite:</Text>
                   <TextInput style={[s.input, { marginTop: 6 }]} value={lastInvite} editable={false} multiline selectTextOnFocus />
+                  <View style={[s.row, { marginTop: 8 }]}>
+                    <Pressable style={[s.smBtn, { flex: 1, alignItems: "center" }]} onPress={() => copyInvite(lastInvite)}>
+                      <Text style={s.smBtnT}>Copy</Text>
+                    </Pressable>
+                    <Pressable style={[s.smBtn, { flex: 1, alignItems: "center", backgroundColor: C.accent }]} onPress={() => setQr({ value: lastInvite, title: "Invite" })}>
+                      <Text style={[s.smBtnT, { color: C.bg }]}>Show QR</Text>
+                    </Pressable>
+                  </View>
                 </View>
               )}
             </ScrollView>
           </SafeAreaView>
         </Drawer>
+
+        <QRModal visible={!!qr} value={qr?.value || ""} title={qr?.title || "Invite"} onClose={() => setQr(null)} />
+        <ScanModal visible={scanning} onScanned={onScanned} onClose={() => setScanning(false)} />
 
         <EventModal
           visible={modal.open}
