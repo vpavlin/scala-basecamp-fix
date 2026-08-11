@@ -55,6 +55,9 @@ public:
     QString kvGet(const QString &key) const;
     void kvRemove(const QString &key) const;
 
+    // Where state is persisted (surfaced in diagnostics to verify the sandbox path).
+    QString dataDir() const;
+
     // Namespace support for multi-instance testing
     void setNamespace(const QString &ns);
     QString namespacedKey(const QString &key) const;

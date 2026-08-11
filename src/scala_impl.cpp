@@ -142,31 +142,34 @@ void ScalaImpl::onContextReady() {
 
     // Build Ops — thin wrappers around modules().delivery_module.*
     // Delivery module uses SYNC methods; we adapt them to the transport's callback API
+    // ASYNC delivery calls (qaku/kym pattern). The SYNC variants block the core's
+    // event-loop thread while the node dials the fleet — which hits the 20s IPC
+    // timeout and leaves the node never-ready ("node not ready", no traffic). The
+    // *Async variants return immediately and fire the callback when done, so the
+    // transport's createNode→start→join chain completes in the background.
     Tx::Ops ops;
     ops.createNode = [this](const std::string& cfg, Tx::Cb cb) {
-        auto r = modules().delivery_module.createNode(cfg);
-        fprintf(stderr, "[scala] delivery createNode success=%d error=%s\n", r.success, r.error.c_str());
-        cb(r.success, r.error);
+        modules().delivery_module.createNodeAsync(cfg, [cb](auto r) {
+            fprintf(stderr, "[scala] delivery createNode success=%d error=%s\n", (int)r.success, r.error.c_str());
+            cb(r.success, r.error);
+        });
     };
     ops.start = [this](Tx::Cb cb) {
-        auto r = modules().delivery_module.start();
-        fprintf(stderr, "[scala] delivery start success=%d error=%s\n", r.success, r.error.c_str());
-        cb(r.success, r.error);
+        modules().delivery_module.startAsync([cb](auto r) {
+            fprintf(stderr, "[scala] delivery start success=%d error=%s\n", (int)r.success, r.error.c_str());
+            cb(r.success, r.error);
+        });
     };
     ops.subscribe = [this](const std::string& topic, Tx::Cb cb) {
-        auto r = modules().delivery_module.subscribe(topic);
-        cb(r.success, r.error);
+        modules().delivery_module.subscribeAsync(topic, [cb](auto r) { cb(r.success, r.error); });
     };
     ops.channelCreate = [this](const std::string& id, const std::string& ct, const std::string& sid, Tx::Cb cb) {
-        auto r = modules().delivery_module.channelCreate(id, ct, sid);
-        cb(r.success, r.error);
+        modules().delivery_module.channelCreateAsync(id, ct, sid, [cb](auto r) { cb(r.success, r.error); });
     };
     ops.channelSend = [this](const std::string& id, const LogosMap& payload, Tx::Cb cb) {
-        // Convert LogosMap to byte vector for channelSend
         std::string data = payload.dump();
         std::vector<uint8_t> bytes(data.begin(), data.end());
-        auto r = modules().delivery_module.channelSend(id, bytes);
-        cb(r.success, r.error);
+        modules().delivery_module.channelSendAsync(id, bytes, [cb](auto r) { cb(r.success, r.error); });
     };
 
     // Receive handlers — connect delivery_module events to transport callbacks
@@ -223,10 +226,21 @@ void ScalaImpl::onContextReady() {
                   return topics; },
           [this](const std::string& topic, const std::string& sealedOnceDecoded) {
               m_sync->handleReceive(topic, sealedOnceDecoded);
+          },
+          /*onReady*/ {},
+          /*setStatus*/ [this](const std::string& s) {
+              m_deliveryStatus = s;
+              fprintf(stderr, "[scala] delivery status: %s\n", s.c_str());
           });
 
     m_sync->setTransport(std::move(tx));
+    m_ctxReady = true;
     m_sync->bootstrap();
+}
+
+void ScalaImpl::ensureDelivery() {
+    // Idempotent: CalendarSync::bootstrap() no-ops if already ready/starting.
+    if (m_sync) m_sync->bootstrap();
 }
 
 // ── Namespace API ────────────────────────────────────────────────────────────
@@ -268,6 +282,7 @@ std::string ScalaImpl::createCalendar(const std::string& name, const std::string
 }
 
 std::string ScalaImpl::listCalendars() {
+    ensureDelivery();  // kym self-drive: the view polls this, so it re-attempts bootstrap
     auto calendars = m_store->listCalendars();
     QJsonArray arr;
     for (const auto& cal : calendars)
@@ -458,8 +473,11 @@ std::string ScalaImpl::qrMatrix(const std::string& text) {
 }
 
 std::string ScalaImpl::diagnostics() {
+    ensureDelivery();
     QJsonObject out;
     out["identity"] = QString::fromStdString(m_identity);
+    out["ctxReady"] = m_ctxReady;
+    out["deliveryStatus"] = QString::fromStdString(m_deliveryStatus);
     out["nodeReady"] = m_sync ? m_sync->ready() : false;
     auto calendars = m_store->listCalendars();
     QJsonArray calArr;
@@ -479,6 +497,7 @@ std::string ScalaImpl::diagnostics() {
     out["calendars"] = calArr;
     out["calendarCount"] = static_cast<int>(calendars.size());
     out["eventCount"] = totalEvents;
+    out["dataDir"] = m_store ? m_store->dataDir() : QString();
     return QString::fromUtf8(QJsonDocument(out).toJson(QJsonDocument::Compact)).toStdString();
 }
 

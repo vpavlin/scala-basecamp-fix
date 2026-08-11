@@ -54,6 +54,18 @@ Item {
         if (root.ready) refresh()
     })
 
+    // Poll like kym's view does: listCalendars() self-drives the delivery bootstrap
+    // in the core, so this keeps the node coming up + refreshes data. Also refreshes
+    // the diagnostics while the Debug panel is open.
+    Timer {
+        interval: 3000; running: true; repeat: true
+        onTriggered: {
+            if (!root.ready) return
+            root.refresh()
+            if (diagPopup.visible) root.diag = root.j(root.core("diagnostics", []), null)
+        }
+    }
+
     // ── data ─────────────────────────────────────────────────────────────────
     function refresh() {
         if (!root.ready) return
@@ -518,8 +530,16 @@ Item {
                 LogosButton { text: "Refresh"; onClicked: root.diag = root.j(root.core("diagnostics", []), null) }
             }
             LogosText {
+                text: root.diag ? ("delivery: " + (root.diag.deliveryStatus || "(none)") + "   ·   context ready: " + (root.diag.ctxReady ? "yes" : "NO")) : "—"
+                color: Theme.palette.textSecondary; font.pixelSize: 12
+            }
+            LogosText {
                 text: root.diag ? (root.diag.calendarCount + " calendar(s) · " + root.diag.eventCount + " event(s) total") : "—"
                 color: Theme.palette.textSecondary; font.pixelSize: 12
+            }
+            LogosText {
+                text: root.diag ? ("data: " + (root.diag.dataDir || "?")) : ""
+                color: Theme.palette.textTertiary; font.pixelSize: 11; elide: Text.ElideMiddle; Layout.fillWidth: true
             }
             LogosText { text: "This device id"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
             Field { text: root.diag ? (root.diag.identity || "(none)") : ""; Layout.fillWidth: true; readOnly: true; selectByMouse: true }

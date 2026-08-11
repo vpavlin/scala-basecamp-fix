@@ -12,9 +12,18 @@ LocalStorage::LocalStorage(QObject *parent)
     : QObject(parent)
     , m_loaded(false)
 {
-    // Determine storage directory
-    m_dataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
-                + "/scala-data";
+    // Stable, writable data dir — the qaku pattern ($HOME/.qaku-core). NOT
+    // QStandardPaths::AppDataLocation: in the Basecamp AppImage sandbox that
+    // resolves under the transient mount (/tmp/.mount_<random>, a DIFFERENT path
+    // every launch), so calendars vanished on restart. $HOME survives restarts;
+    // overridable via SCALA_CORE_DATA (multi-instance / tests).
+    QByteArray envDir = qgetenv("SCALA_CORE_DATA");
+    if (!envDir.isEmpty()) {
+        m_dataDir = QString::fromUtf8(envDir);
+    } else {
+        QByteArray home = qgetenv("HOME");
+        m_dataDir = (home.isEmpty() ? QStringLiteral("/tmp") : QString::fromUtf8(home)) + "/.scala-core";
+    }
     QDir().mkpath(m_dataDir);
 
     m_storagePath = m_dataDir + "/calendar_store.json";

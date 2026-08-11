@@ -128,8 +128,10 @@ public:
     // createNode → start → (join every topic) → onReady().
     void bootstrap() {
         if (m_nodeReady || m_starting) return;
-        auto topics = m_topics();
-        if (topics.empty()) return;                    // unpaired — nothing to sync yet
+        // Connect EAGERLY even with no shared calendars yet (kym/qaku bring the node
+        // up at startup). The old `if (topics.empty()) return;` meant a fresh install
+        // — or any restart before a calendar was shared — never started the node, so
+        // it stayed "not ready" forever. Topics are joined per-calendar after start.
         m_starting = true;
 
         auto toWire = [](const LogosMap &v) -> std::string {

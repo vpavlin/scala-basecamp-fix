@@ -114,6 +114,13 @@ private:
     CalendarSync* m_sync = nullptr;
     std::string m_identity;
     std::string m_namespace;
+    bool m_ctxReady = false;              // onContextReady() actually fired
+    std::string m_deliveryStatus;         // last transport status (Connecting/Connected/error)
+    // Idempotently (re)attempt the delivery bootstrap. Called from onContextReady
+    // AND lazily from the polled read methods (kym self-drive pattern) so the node
+    // comes up even if the lifecycle hook is flaky / there were no shared calendars
+    // at startup.
+    void ensureDelivery();
 
     // Handle incoming sync messages from CalendarSync
     void onSyncMessageReceived(const std::string& calendarId, const std::string& msgJson);

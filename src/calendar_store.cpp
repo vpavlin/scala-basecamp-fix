@@ -32,6 +32,10 @@ void CalendarStore::setClient(LogosAPIClient *client) {
 void CalendarStore::setNamespace(const QString &ns) {
     m_namespace = ns.isEmpty() ? QStringLiteral("default") : ns;
 }
+QString CalendarStore::dataDir() const {
+    return m_storage ? m_storage->dataDir() : QString();
+}
+
 
 QString CalendarStore::namespacedKey(const QString &key) const {
     return QStringLiteral("scala:") + m_namespace + QStringLiteral(":") + key;
