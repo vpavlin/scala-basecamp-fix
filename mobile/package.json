@@ -12,6 +12,7 @@
     "@noble/ciphers": "^2.2.0",
     "@noble/hashes": "^2.2.0",
     "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-native-community/datetimepicker": "9.1.0",
     "base64-js": "^1.5.1",
     "expo": "~57.0.4",
     "expo-camera": "~57.0.1",

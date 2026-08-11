@@ -103,6 +103,20 @@ export async function createCalendar(name: string, color = "#89b4fa"): Promise<C
   return cal;
 }
 
+export async function updateEvent(ev: CalEvent): Promise<void> {
+  const next = { ...ev, updatedAt: Date.now() };
+  await store.saveEvent(next);
+  await sync.sendMessage(ev.calendarId, "UpdateEvent", JSON.stringify(next)).catch(() => {});
+  notifyChange();
+}
+
+export async function deleteEvent(ev: CalEvent): Promise<void> {
+  const tomb = { ...ev, deleted: true, updatedAt: Date.now() };
+  await store.saveEvent(tomb);
+  await sync.sendMessage(ev.calendarId, "DeleteEvent", JSON.stringify({ id: ev.id })).catch(() => {});
+  notifyChange();
+}
+
 export async function joinFromInvite(link: string): Promise<Calendar | null> {
   const inv = parseInvite(link);
   if (!inv) return null;

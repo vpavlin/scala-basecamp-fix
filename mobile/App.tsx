@@ -1,37 +1,56 @@
-// Scala mobile — minimal calendar peer over Logos Delivery (SDS channels).
-// SCAFFOLD: agenda list of the shared calendars, join-by-invite, add-event.
-// The full month/week/day UI (from the desktop QML) is the next iteration; this
-// proves the sync spine end-to-end against the desktop.
-import React, { useEffect, useState, useCallback } from "react";
+// Scala mobile — shared calendar peer over Logos Delivery (SDS channels).
+// Month grid + day detail + event editor, plus a Calendars panel (create / join /
+// share invite / shared-node toggle). Syncs peer-to-peer with the desktop.
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import {
   SafeAreaView, ScrollView, View, Text, TextInput, Pressable, Switch, StyleSheet, Alert,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { store, Calendar, CalEvent } from "./src/lib/store";
 import {
-  onChange, startSyncing, joinFromInvite, createEvent, createCalendar,
-  buildInvite, getSharedNode, setSharedNode,
+  onChange, startSyncing, joinFromInvite, createEvent, updateEvent, deleteEvent,
+  createCalendar, buildInvite, getSharedNode, setSharedNode,
 } from "./src/lib/calendar";
 import { deliveryAvailable } from "./src/lib/scala-sync";
+import { MonthGrid } from "./src/components/MonthGrid";
+import { EventModal, EventDraft } from "./src/components/EventModal";
 
 const C = {
   bg: "#1e1e2e", surface: "#2a2a3c", text: "#cdd6f4", sub: "#9399b2",
-  primary: "#89b4fa", border: "#313244", accent: "#a6e3a1",
+  primary: "#89b4fa", border: "#313244", accent: "#a6e3a1", danger: "#f38ba8",
 };
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+function sameDay(a: Date, b: Date) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+function atHour(d: Date, h: number) {
+  const x = new Date(d); x.setHours(h, 0, 0, 0); return x;
+}
 
 export default function App() {
   const [cals, setCals] = useState<Calendar[]>([]);
   const [events, setEvents] = useState<CalEvent[]>([]);
   const [status, setStatus] = useState("starting");
-  const [invite, setInvite] = useState("");
-  const [title, setTitle] = useState("");
-  const [newCalName, setNewCalName] = useState("");
-  const [lastInvite, setLastInvite] = useState("");
   const [shared, setShared] = useState(false);
+
+  const [cursor, setCursor] = useState(new Date());   // month being viewed
+  const [selected, setSelected] = useState(new Date()); // selected day
+  const [panelOpen, setPanelOpen] = useState(false);
+
+  // event modal
+  const [modal, setModal] = useState<{ open: boolean; draft: EventDraft; editing?: CalEvent }>({
+    open: false, draft: { title: "", startTime: Date.now(), endTime: Date.now() + 3600_000 },
+  });
+
+  // calendars panel inputs
+  const [newCalName, setNewCalName] = useState("");
+  const [invite, setInvite] = useState("");
+  const [lastInvite, setLastInvite] = useState("");
 
   const refresh = useCallback(async () => {
     setCals(await store.listCalendars());
-    setEvents((await store.listEvents()).filter((e) => !e.deleted).sort((a, b) => a.startTime - b.startTime));
+    setEvents((await store.listEvents()).filter((e) => !e.deleted));
   }, []);
 
   useEffect(() => {
@@ -40,134 +59,198 @@ export default function App() {
     (async () => {
       setShared(await getSharedNode());
       if (!deliveryAvailable()) { setStatus("no delivery node in this build"); return; }
-      try { await startSyncing(undefined, (s) => setStatus(s)); }
-      catch (e) { setStatus("sync error: " + (e instanceof Error ? e.message : String(e))); }
+      try { await startSyncing(undefined, setStatus); } catch (e) { setStatus("sync error: " + msg(e)); }
     })();
     return off;
   }, [refresh]);
 
-  const doCreate = async () => {
+  const writable = cals.find((c) => c.encryptionKey); // a calendar we can add to
+  const colorFor = useCallback((id: string) => cals.find((c) => c.id === id)?.color || C.primary, [cals]);
+
+  const dayEvents = useMemo(
+    () => events.filter((e) => sameDay(new Date(e.startTime), selected)).sort((a, b) => a.startTime - b.startTime),
+    [events, selected],
+  );
+
+  // ── actions ────────────────────────────────────────────────────────────────
+  const openNew = () => {
+    if (!writable) { Alert.alert("No calendar", "Create or join a calendar first (Calendars ▸)."); setPanelOpen(true); return; }
+    setModal({ open: true, draft: { title: "", startTime: atHour(selected, 9).getTime(), endTime: atHour(selected, 10).getTime() } });
+  };
+  const openEdit = (ev: CalEvent) =>
+    setModal({ open: true, editing: ev, draft: { id: ev.id, title: ev.title, startTime: ev.startTime, endTime: ev.endTime, description: ev.description } });
+
+  const saveEvent = async (d: EventDraft) => {
+    const target = modal.editing?.calendarId || writable?.id;
+    if (!target) return;
+    if (modal.editing) {
+      await updateEvent({ ...modal.editing, title: d.title, startTime: d.startTime, endTime: d.endTime, description: d.description });
+    } else {
+      await createEvent(target, { title: d.title, startTime: d.startTime, endTime: d.endTime, description: d.description });
+    }
+    setModal((m) => ({ ...m, open: false }));
+  };
+  const removeEvent = async () => {
+    if (modal.editing) await deleteEvent(modal.editing);
+    setModal((m) => ({ ...m, open: false }));
+  };
+
+  const doCreateCal = async () => {
     const cal = await createCalendar(newCalName || "My calendar");
     setNewCalName("");
-    const link = buildInvite(cal);
-    setLastInvite(link);
-    Alert.alert("Calendar created", `"${cal.name}" — share the invite below to sync it with others.`);
+    setLastInvite(buildInvite(cal));
+    await startSyncing(undefined, setStatus);
   };
-
-  const toggleShared = async (v: boolean) => {
-    setShared(v);
-    await setSharedNode(v);
-    Alert.alert(
-      v ? "Shared node ON" : "Shared node OFF",
-      v
-        ? "Scala will route through the device-wide Logos Delivery app. Install it and approve Scala once. Restart Scala to apply."
-        : "Scala will use its own embedded node. Restart Scala to apply.",
-    );
-  };
-
   const doJoin = async () => {
     const cal = await joinFromInvite(invite.trim());
     if (!cal) { Alert.alert("Bad invite", "Expected a scala://join?cal=…&key=… link"); return; }
     setInvite("");
-    await startSyncing(undefined, (s) => setStatus(s)); // (re)join the new topic, honor pref
+    await startSyncing(undefined, setStatus);
     Alert.alert("Joined", `Syncing "${cal.name}"`);
   };
-
-  const doAdd = async () => {
-    const cal = cals.find((c) => c.encryptionKey);
-    if (!cal) { Alert.alert("No shared calendar", "Join one via an invite first."); return; }
-    if (!title.trim()) return;
-    const now = Date.now();
-    await createEvent(cal.id, { title: title.trim(), startTime: now, endTime: now + 3600_000 });
-    setTitle("");
+  const toggleShared = async (v: boolean) => {
+    setShared(v); await setSharedNode(v);
+    Alert.alert(v ? "Shared node ON" : "Shared node OFF", "Restart Scala to apply.");
   };
 
+  const shiftMonth = (delta: number) => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1));
+
+  // ── render ───────────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={s.root}>
       <StatusBar style="light" />
-      <ScrollView contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
-        <Text style={s.h1}>Scala</Text>
-        <Text style={s.status}>{status} · {cals.length} calendar(s)</Text>
 
-        <View style={s.card}>
+      {/* header */}
+      <View style={s.header}>
+        <Pressable onPress={() => shiftMonth(-1)} hitSlop={12}><Text style={s.nav}>‹</Text></Pressable>
+        <Pressable onPress={() => { const n = new Date(); setCursor(n); setSelected(n); }}>
+          <Text style={s.month}>{MONTHS[cursor.getMonth()]} {cursor.getFullYear()}</Text>
+        </Pressable>
+        <Pressable onPress={() => shiftMonth(1)} hitSlop={12}><Text style={s.nav}>›</Text></Pressable>
+        <View style={{ flex: 1 }} />
+        <Pressable onPress={() => setPanelOpen((o) => !o)} hitSlop={10}>
+          <Text style={s.panelBtn}>Calendars {panelOpen ? "▾" : "▸"}</Text>
+        </Pressable>
+      </View>
+      <Text style={s.status}>{status} · {cals.length} calendar(s)</Text>
+
+      {/* calendars management panel */}
+      {panelOpen && (
+        <ScrollView style={s.panel} keyboardShouldPersistTaps="handled">
           <View style={s.rowBetween}>
             <View style={{ flex: 1, paddingRight: 10 }}>
-              <Text style={s.label}>Shared Logos Delivery node</Text>
-              <Text style={s.sub}>Route through the device-wide node (approve once). Restart to apply.</Text>
+              <Text style={s.pLabel}>Shared Logos Delivery node</Text>
+              <Text style={s.sub}>Device-wide node (approve once). Restart to apply.</Text>
             </View>
             <Switch value={shared} onValueChange={toggleShared} trackColor={{ true: C.primary, false: C.border }} thumbColor="#fff" />
           </View>
-        </View>
 
-        <View style={s.card}>
-          <Text style={s.label}>Create a calendar</Text>
-          <TextInput
-            style={s.input} value={newCalName} onChangeText={setNewCalName}
-            placeholder="Calendar name" placeholderTextColor={C.sub}
-          />
-          <Pressable style={s.btn} onPress={doCreate}><Text style={s.btnT}>Create</Text></Pressable>
+          <Text style={s.pLabel}>Your calendars</Text>
+          {cals.length === 0 && <Text style={s.sub}>None yet — create or join one below.</Text>}
+          {cals.map((c) => (
+            <View key={c.id} style={s.calRow}>
+              <View style={[s.dot, { backgroundColor: c.color }]} />
+              <Text style={s.calName}>{c.name}</Text>
+              {c.encryptionKey ? (
+                <Pressable onPress={() => setLastInvite(buildInvite(c))}><Text style={s.share}>Share</Text></Pressable>
+              ) : <Text style={s.sub}>local</Text>}
+            </View>
+          ))}
+
+          <Text style={s.pLabel}>Create a calendar</Text>
+          <View style={s.row}>
+            <TextInput style={[s.input, { flex: 1 }]} value={newCalName} onChangeText={setNewCalName} placeholder="Name" placeholderTextColor={C.sub} />
+            <Pressable style={s.smBtn} onPress={doCreateCal}><Text style={s.smBtnT}>Create</Text></Pressable>
+          </View>
+
+          <Text style={s.pLabel}>Join via invite</Text>
+          <View style={s.row}>
+            <TextInput style={[s.input, { flex: 1 }]} value={invite} onChangeText={setInvite} placeholder="scala://join?…" placeholderTextColor={C.sub} autoCapitalize="none" />
+            <Pressable style={s.smBtn} onPress={doJoin}><Text style={s.smBtnT}>Join</Text></Pressable>
+          </View>
+
           {!!lastInvite && (
             <View style={{ marginTop: 10 }}>
-              <Text style={s.sub}>Share this invite (long-press to copy):</Text>
+              <Text style={s.sub}>Invite (long-press to copy):</Text>
               <TextInput style={[s.input, { marginTop: 6 }]} value={lastInvite} editable={false} multiline selectTextOnFocus />
             </View>
           )}
-        </View>
+        </ScrollView>
+      )}
 
-        <View style={s.card}>
-          <Text style={s.label}>Join a shared calendar</Text>
-          <TextInput
-            style={s.input} value={invite} onChangeText={setInvite}
-            placeholder="scala://join?cal=…&key=…" placeholderTextColor={C.sub} autoCapitalize="none"
-          />
-          <Pressable style={s.btn} onPress={doJoin}><Text style={s.btnT}>Join</Text></Pressable>
-        </View>
+      {!panelOpen && (
+        <>
+          <View style={s.grid}>
+            <MonthGrid
+              month={cursor.getMonth()} year={cursor.getFullYear()}
+              events={events} selected={selected} colorFor={colorFor} onSelect={setSelected}
+            />
+          </View>
 
-        <View style={s.card}>
-          <Text style={s.label}>Quick add event (to first shared calendar)</Text>
-          <TextInput
-            style={s.input} value={title} onChangeText={setTitle}
-            placeholder="Event title" placeholderTextColor={C.sub}
-          />
-          <Pressable style={[s.btn, { backgroundColor: C.accent }]} onPress={doAdd}>
-            <Text style={[s.btnT, { color: "#1e1e2e" }]}>Add now</Text>
-          </Pressable>
-        </View>
-
-        <Text style={s.label}>Agenda</Text>
-        {events.length === 0 ? (
-          <Text style={s.sub}>No events yet.</Text>
-        ) : (
-          events.map((item) => {
-            const cal = cals.find((c) => c.id === item.calendarId);
-            return (
-              <View style={s.event} key={item.id}>
-                <View style={[s.dot, { backgroundColor: cal?.color || C.primary }]} />
+          <View style={s.dayHead}>
+            <Text style={s.dayTitle}>{selected.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</Text>
+          </View>
+          <ScrollView style={{ flex: 1 }}>
+            {dayEvents.length === 0 && <Text style={[s.sub, { padding: 16 }]}>No events. Tap + to add one.</Text>}
+            {dayEvents.map((ev) => (
+              <Pressable key={ev.id} style={s.event} onPress={() => openEdit(ev)}>
+                <View style={[s.dot, { backgroundColor: colorFor(ev.calendarId) }]} />
                 <View style={{ flex: 1 }}>
-                  <Text style={s.evTitle}>{item.title}</Text>
-                  <Text style={s.sub}>{new Date(item.startTime).toLocaleString()}</Text>
+                  <Text style={s.evTitle}>{ev.title}</Text>
+                  <Text style={s.sub}>
+                    {new Date(ev.startTime).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+                    {" – "}
+                    {new Date(ev.endTime).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+                    {ev.description ? ` · ${ev.description}` : ""}
+                  </Text>
                 </View>
-              </View>
-            );
-          })
-        )}
-      </ScrollView>
+              </Pressable>
+            ))}
+            <View style={{ height: 90 }} />
+          </ScrollView>
+
+          <Pressable style={s.fab} onPress={openNew}><Text style={s.fabT}>+</Text></Pressable>
+        </>
+      )}
+
+      <EventModal
+        visible={modal.open}
+        initial={modal.draft}
+        onSave={saveEvent}
+        onDelete={modal.editing ? removeEvent : undefined}
+        onClose={() => setModal((m) => ({ ...m, open: false }))}
+      />
     </SafeAreaView>
   );
 }
 
+function msg(e: unknown) { return e instanceof Error ? e.message : String(e); }
+
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: C.bg, padding: 16 },
-  h1: { color: C.text, fontSize: 28, fontWeight: "700", marginTop: 8 },
-  status: { color: C.sub, fontSize: 12, marginBottom: 12 },
-  rowBetween: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  card: { backgroundColor: C.surface, borderRadius: 12, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: C.border },
-  label: { color: C.text, fontSize: 13, fontWeight: "600", marginBottom: 6 },
-  input: { backgroundColor: C.bg, borderRadius: 8, borderWidth: 1, borderColor: C.border, color: C.text, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 8 },
-  btn: { backgroundColor: C.primary, borderRadius: 8, paddingVertical: 11, alignItems: "center" },
-  btnT: { color: "#1e1e2e", fontWeight: "700" },
-  sub: { color: C.sub, fontSize: 12 },
-  event: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: C.surface, borderRadius: 10, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: C.border },
-  dot: { width: 12, height: 12, borderRadius: 6 },
+  root: { flex: 1, backgroundColor: C.bg, paddingTop: 8 },
+  header: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 16, paddingTop: 8 },
+  nav: { color: C.primary, fontSize: 28, fontWeight: "700", width: 22, textAlign: "center" },
+  month: { color: C.text, fontSize: 20, fontWeight: "700" },
+  panelBtn: { color: C.primary, fontSize: 14, fontWeight: "600" },
+  status: { color: C.sub, fontSize: 11, paddingHorizontal: 16, paddingTop: 2, paddingBottom: 6 },
+  grid: { paddingHorizontal: 12, paddingTop: 4 },
+  dayHead: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 4, borderTopWidth: 1, borderTopColor: C.border, marginTop: 6 },
+  dayTitle: { color: C.text, fontSize: 15, fontWeight: "700" },
+  event: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: C.surface, borderRadius: 10, padding: 12, marginHorizontal: 12, marginTop: 8, borderWidth: 1, borderColor: C.border },
   evTitle: { color: C.text, fontSize: 15, fontWeight: "600" },
+  sub: { color: C.sub, fontSize: 12 },
+  dot: { width: 12, height: 12, borderRadius: 6 },
+  fab: { position: "absolute", right: 20, bottom: 28, width: 60, height: 60, borderRadius: 30, backgroundColor: C.primary, alignItems: "center", justifyContent: "center", elevation: 6 },
+  fabT: { color: C.bg, fontSize: 32, fontWeight: "700", marginTop: -2 },
+  // panel
+  panel: { paddingHorizontal: 16, paddingTop: 6 },
+  rowBetween: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
+  row: { flexDirection: "row", gap: 8, alignItems: "center" },
+  pLabel: { color: C.text, fontSize: 13, fontWeight: "700", marginTop: 16, marginBottom: 6 },
+  calRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8 },
+  calName: { color: C.text, fontSize: 15, flex: 1 },
+  share: { color: C.primary, fontSize: 13, fontWeight: "600" },
+  input: { backgroundColor: C.surface, borderRadius: 8, borderWidth: 1, borderColor: C.border, color: C.text, paddingHorizontal: 12, paddingVertical: 10 },
+  smBtn: { backgroundColor: C.primary, borderRadius: 8, paddingHorizontal: 16, paddingVertical: 11 },
+  smBtnT: { color: C.bg, fontWeight: "700" },
 });

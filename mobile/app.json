@@ -3,21 +3,22 @@
     "name": "Scala",
     "slug": "scala",
     "scheme": "scala",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "platforms": [
       "android"
     ],
     "icon": "./assets/icon.png",
     "android": {
       "package": "xyz.vpavlin.scala",
-      "versionCode": 2
+      "versionCode": 3
     },
     "plugins": [
       "./plugins/withLogosDelivery",
       "./plugins/withReleaseSigning",
       "expo-secure-store",
       "expo-camera",
-      "./src/lib/logos-transport-pkg/plugins/withDeliveryClient.js"
+      "./src/lib/logos-transport-pkg/plugins/withDeliveryClient.js",
+      "@react-native-community/datetimepicker"
     ],
     "extra": {
       "comment": "versionCode here is source of truth; assert it matches android/app/build.gradle after prebuild."
