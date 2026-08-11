@@ -1,4 +1,5 @@
 #include "scala_impl.h"
+#include "qrcodegen.hpp"
 
 // Generated umbrella: modules() + typed dependency wrappers (delivery_module)
 #include "logos_sdk.h"
@@ -422,6 +423,50 @@ bool ScalaImpl::joinSharedCalendar(const std::string& calendarId,
     m_sync->sendMessage(qCalId.toStdString(), msg);
 
     return true;
+}
+
+std::string ScalaImpl::qrMatrix(const std::string& text) {
+    QJsonObject out;
+    if (text.empty()) {
+        out["ok"] = false; out["error"] = "empty";
+        return QString::fromUtf8(QJsonDocument(out).toJson(QJsonDocument::Compact)).toStdString();
+    }
+    try {
+        const qrcodegen::QrCode qr = qrcodegen::QrCode::encodeText(text.c_str(), qrcodegen::QrCode::Ecc::MEDIUM);
+        const int n = qr.getSize();
+        QJsonArray cells;
+        for (int y = 0; y < n; ++y)
+            for (int x = 0; x < n; ++x) cells.append(qr.getModule(x, y) ? 1 : 0);
+        out["ok"] = true; out["n"] = n; out["cells"] = cells;
+    } catch (const std::exception& e) {
+        out["ok"] = false; out["error"] = QString("qr encode failed: ") + e.what();
+    }
+    return QString::fromUtf8(QJsonDocument(out).toJson(QJsonDocument::Compact)).toStdString();
+}
+
+std::string ScalaImpl::diagnostics() {
+    QJsonObject out;
+    out["identity"] = QString::fromStdString(m_identity);
+    out["nodeReady"] = m_sync ? m_sync->ready() : false;
+    auto calendars = m_store->listCalendars();
+    QJsonArray calArr;
+    int totalEvents = 0;
+    for (const auto& cal : calendars) {
+        auto events = m_store->listEvents(cal.id);
+        totalEvents += events.size();
+        QJsonObject c;
+        c["id"] = cal.id;
+        c["name"] = cal.name;
+        c["shared"] = cal.isShared;
+        c["syncing"] = m_sync ? m_sync->isSyncing(cal.id.toStdString()) : false;
+        c["events"] = static_cast<int>(events.size());
+        c["creatorId"] = cal.creatorId;
+        calArr.append(c);
+    }
+    out["calendars"] = calArr;
+    out["calendarCount"] = static_cast<int>(calendars.size());
+    out["eventCount"] = totalEvents;
+    return QString::fromUtf8(QJsonDocument(out).toJson(QJsonDocument::Compact)).toStdString();
 }
 
 std::string ScalaImpl::getSyncStatus(const std::string& calendarId) {

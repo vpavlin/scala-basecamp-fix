@@ -187,6 +187,7 @@ Item {
                 LogosButton { text: "Today"; onClicked: { var n = new Date(); root.viewMonth = n; root.selectedDay = n } }
                 Item { Layout.fillWidth: true }
                 LogosText { text: root.ready ? (root.calendars.length + " calendar(s)") : "connecting…"; color: Theme.palette.textTertiary; font.pixelSize: 12 }
+                LogosButton { text: "Debug"; onClicked: root.openDiag() }
                 LogosButton { text: "+ New event"; onClicked: root.openNewEvent() }
             }
 
@@ -443,12 +444,19 @@ Item {
         }
     }
 
-    // ── share popup ──────────────────────────────────────────────────────────
+    // ── share popup (link + a real QR the phone can scan) ─────────────────────
+    property var qrData: null    // { n, cells } from core qrMatrix
     function openShare(cal) {
         var link = core("generateShareLink", [cal.id])
         link = root.j(link, link)   // unwrap if the bridge quoted it
         shareLink.text = (typeof link === "string" ? link : "")
         shareTitle.text = cal.name || "calendar"
+        // Build a scannable QR matrix from the core (drawn on a Canvas; data: URIs
+        // are blocked in the sandbox, so we render cells ourselves).
+        root.qrData = null
+        var m = root.j(core("qrMatrix", [shareLink.text]), null)
+        if (m && m.ok && m.n && m.cells && m.cells.length >= m.n * m.n) root.qrData = { n: m.n, cells: m.cells }
+        qrCanvas.requestPaint()
         sharePopup.open()
     }
     Popup {
@@ -456,10 +464,29 @@ Item {
         anchors.centerIn: Overlay.overlay
         width: 460; modal: true; padding: Theme.spacing.large
         background: Rectangle { radius: Theme.spacing.radiusMedium; color: Theme.palette.backgroundElevated; border.width: 1; border.color: Theme.palette.borderHairline }
+        onOpened: qrCanvas.requestPaint()
         ColumnLayout {
             anchors.fill: parent; spacing: Theme.spacing.small
             LogosText { id: shareTitle; text: ""; color: Theme.palette.text; font.pixelSize: 18; font.weight: Theme.typography.weightMedium }
-            LogosText { text: "Share this link so another device can join and sync:"; color: Theme.palette.textTertiary; font.pixelSize: 12 }
+            LogosText { text: "Scan this on the phone, or copy the link:"; color: Theme.palette.textTertiary; font.pixelSize: 12 }
+            Rectangle {
+                Layout.alignment: Qt.AlignHCenter
+                width: 220; height: 220; radius: Theme.spacing.radiusSmall; color: "#ffffff"
+                visible: root.qrData !== null
+                Canvas {
+                    id: qrCanvas; anchors.fill: parent; anchors.margins: 10
+                    onPaint: {
+                        var ctx = getContext("2d"); ctx.reset()
+                        ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, width, height)
+                        var d = root.qrData; if (!d || !d.n) return
+                        var cell = width / d.n; ctx.fillStyle = "#000000"
+                        for (var y = 0; y < d.n; y++)
+                            for (var x = 0; x < d.n; x++)
+                                if (d.cells[y * d.n + x])
+                                    ctx.fillRect(Math.floor(x * cell), Math.floor(y * cell), Math.ceil(cell), Math.ceil(cell))
+                    }
+                }
+            }
             Field { id: shareLink; Layout.fillWidth: true; readOnly: true; selectByMouse: true }
             RowLayout {
                 Layout.fillWidth: true; Layout.topMargin: Theme.spacing.small
@@ -467,6 +494,53 @@ Item {
                 LogosButton { text: "Copy"; onClicked: { shareLink.selectAll(); shareLink.copy() } }
                 LogosButton { text: "Close"; onClicked: sharePopup.close() }
             }
+        }
+    }
+
+    // ── diagnostics popup (connection + events) ──────────────────────────────
+    property var diag: null
+    function openDiag() { root.diag = root.j(core("diagnostics", []), null); diagPopup.open() }
+    Popup {
+        id: diagPopup
+        anchors.centerIn: Overlay.overlay
+        width: 460; height: 460; modal: true; padding: Theme.spacing.large
+        background: Rectangle { radius: Theme.spacing.radiusMedium; color: Theme.palette.backgroundElevated; border.width: 1; border.color: Theme.palette.borderHairline }
+        onOpened: root.diag = root.j(root.core("diagnostics", []), null)
+        ColumnLayout {
+            anchors.fill: parent; spacing: Theme.spacing.small
+            LogosText { text: "Diagnostics"; color: Theme.palette.text; font.pixelSize: 18; font.weight: Theme.typography.weightMedium }
+
+            RowLayout {
+                Layout.fillWidth: true; spacing: Theme.spacing.medium
+                Rectangle { width: 10; height: 10; radius: 5; color: (root.diag && root.diag.nodeReady) ? Theme.palette.success : Theme.palette.warning; Layout.alignment: Qt.AlignVCenter }
+                LogosText { text: (root.diag && root.diag.nodeReady) ? "Delivery node connected" : "Node not ready"; color: Theme.palette.text; font.pixelSize: 14 }
+                Item { Layout.fillWidth: true }
+                LogosButton { text: "Refresh"; onClicked: root.diag = root.j(root.core("diagnostics", []), null) }
+            }
+            LogosText {
+                text: root.diag ? (root.diag.calendarCount + " calendar(s) · " + root.diag.eventCount + " event(s) total") : "—"
+                color: Theme.palette.textSecondary; font.pixelSize: 12
+            }
+            LogosText { text: "This device id"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
+            Field { text: root.diag ? (root.diag.identity || "(none)") : ""; Layout.fillWidth: true; readOnly: true; selectByMouse: true }
+
+            LogosText { text: "Per-calendar sync"; color: Theme.palette.textTertiary; font.pixelSize: 11; Layout.topMargin: Theme.spacing.small }
+            ListView {
+                Layout.fillWidth: true; Layout.fillHeight: true; clip: true
+                model: (root.diag && root.diag.calendars) ? root.diag.calendars : []
+                spacing: 4
+                delegate: Rectangle {
+                    width: ListView.view.width; height: 40; radius: Theme.spacing.radiusSmall; color: Theme.palette.backgroundInset
+                    RowLayout {
+                        anchors.fill: parent; anchors.leftMargin: Theme.spacing.small; anchors.rightMargin: Theme.spacing.small; spacing: Theme.spacing.small
+                        Rectangle { width: 8; height: 8; radius: 4; color: modelData.syncing ? Theme.palette.success : Theme.palette.textTertiary }
+                        LogosText { text: modelData.name || modelData.id; color: Theme.palette.text; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideRight }
+                        LogosText { text: (modelData.events || 0) + " ev"; color: Theme.palette.textTertiary; font.pixelSize: 12 }
+                        LogosText { text: modelData.shared ? (modelData.syncing ? "syncing" : "offline") : "local"; color: modelData.syncing ? Theme.palette.success : Theme.palette.textTertiary; font.pixelSize: 12 }
+                    }
+                }
+            }
+            RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } LogosButton { text: "Close"; onClicked: diagPopup.close() } }
         }
     }
 }

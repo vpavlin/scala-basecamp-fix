@@ -24,6 +24,7 @@ logos_module(
         src/calendar_sync.h
         src/logos_transport.hpp
         src/qr_generator.cpp
+        src/qrcodegen.cpp
     INCLUDE_DIRS src
     LINK_LIBRARIES OpenSSL::Crypto
 )

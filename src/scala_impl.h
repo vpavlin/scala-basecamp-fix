@@ -66,6 +66,15 @@ public:
     /// Get the current sync status for a calendar.
     std::string getSyncStatus(const std::string& calendarId);
 
+    /// Encode text as a REAL QR code matrix (vendored qrcodegen). Returns JSON
+    /// {"ok":true,"n":<size>,"cells":[0|1,...row-major],"text":...} for the view
+    /// to draw on a Canvas (data: URIs are blocked in the sandbox).
+    std::string qrMatrix(const std::string& text);
+
+    /// Connection + events diagnostics for the debug panel. JSON:
+    /// {identity, nodeReady, calendarCount, eventCount, calendars:[{id,name,shared,syncing,events,creatorId}]}
+    std::string diagnostics();
+
     // ── Share link API ───────────────────────────────────────────────────────
     /// Generate a scala:// share link for a calendar.
     std::string generateShareLink(const std::string& calendarId);
