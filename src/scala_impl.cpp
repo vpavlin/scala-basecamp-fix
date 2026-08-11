@@ -11,6 +11,7 @@
 #include "logos_transport.hpp"
 
 #include <chrono>
+#include <random>
 #include <cstdlib>
 #include <cstdio>
 #include <ctime>
@@ -23,11 +24,19 @@
 using scala::json;
 
 // ── small helpers ────────────────────────────────────────────────────────────
+// RFC-4122-ish v4 UUID. MUST use a properly-seeded high-quality RNG: std::rand()
+// is deterministic when unseeded (replays the same sequence from seed 1 every
+// process launch), so unseeded it hands the FIRST calendar/event after each
+// restart an IDENTICAL id → colliding calendars (shared log/key/color) and, worse,
+// re-used event ids that appendEvent's dedup-by-id silently DROPS. Seed once from
+// random_device; nonce hex nibbles from a persistent 64-bit Mersenne Twister.
 static std::string generateUuid() {
+    static std::mt19937_64 rng(std::random_device{}());
+    static std::uniform_int_distribution<int> hex(0, 15);
     std::ostringstream oss;
     oss << std::hex;
     for (int i = 0; i < 32; i++) {
-        int r = std::rand() % 16;
+        int r = hex(rng);
         if (i == 8 || i == 12 || i == 16 || i == 20) oss << '-';
         if (i == 12) oss << '4';
         else if (i == 16) oss << (8 + (r & 3));
