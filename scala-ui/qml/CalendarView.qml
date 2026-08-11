@@ -130,14 +130,15 @@ Item {
     // ── layout ───────────────────────────────────────────────────────────────
     Rectangle { anchors.fill: parent; color: Theme.palette.background }
 
-    RowLayout {
+    // 3 resizable panes: calendars | month | agenda. Drag the dividers to resize.
+    SplitView {
         anchors.fill: parent
-        spacing: 0
+        orientation: Qt.Horizontal
 
-        // ── sidebar: calendars ─────────────────────────────────────────────
+        // ── pane 1: calendars sidebar ──────────────────────────────────────
         Rectangle {
-            Layout.preferredWidth: 240
-            Layout.fillHeight: true
+            SplitView.preferredWidth: 240
+            SplitView.minimumWidth: 170
             color: Theme.palette.backgroundInset
             ColumnLayout {
                 anchors.fill: parent
@@ -146,7 +147,6 @@ Item {
 
                 LogosText { text: "Calendars"; color: Theme.palette.text; font.pixelSize: 18; font.weight: Theme.typography.weightMedium }
 
-                // "All calendars" row
                 Rectangle {
                     Layout.fillWidth: true; height: 34; radius: Theme.spacing.radiusSmall
                     color: root.filterCalId === "" ? Theme.palette.backgroundSecondary : "transparent"
@@ -171,7 +171,6 @@ Item {
                             LogosText { text: modelData.name || "(unnamed)"; color: Theme.palette.text; font.pixelSize: 14; Layout.fillWidth: true; elide: Text.ElideRight }
                             LogosText {
                                 text: "share"; color: Theme.palette.primary; font.pixelSize: 12
-                                visible: !!modelData.encryptionKey || true
                                 MouseArea { anchors.fill: parent; onClicked: root.openShare(modelData) }
                             }
                         }
@@ -184,12 +183,12 @@ Item {
             }
         }
 
-        // ── main: month + day detail ───────────────────────────────────────
+        // ── pane 2: month ──────────────────────────────────────────────────
         ColumnLayout {
-            Layout.fillWidth: true; Layout.fillHeight: true
+            SplitView.fillWidth: true
+            SplitView.minimumWidth: 380
             spacing: 0
 
-            // header
             RowLayout {
                 Layout.fillWidth: true
                 Layout.margins: Theme.spacing.medium
@@ -198,17 +197,15 @@ Item {
                 LogosText {
                     text: root.monthNames[root.viewMonth.getMonth()] + " " + root.viewMonth.getFullYear()
                     color: Theme.palette.text; font.pixelSize: 20; font.weight: Theme.typography.weightMedium
-                    Layout.minimumWidth: 180
+                    Layout.minimumWidth: 160
                 }
                 LogosButton { text: "›"; onClicked: root.viewMonth = new Date(root.viewMonth.getFullYear(), root.viewMonth.getMonth() + 1, 1) }
                 LogosButton { text: "Today"; onClicked: { var n = new Date(); root.viewMonth = n; root.selectedDay = n } }
                 Item { Layout.fillWidth: true }
-                LogosText { text: root.ready ? (root.calendars.length + " calendar(s)") : "connecting…"; color: Theme.palette.textTertiary; font.pixelSize: 12 }
                 LogosButton { text: "Debug"; onClicked: root.openDiag() }
-                LogosButton { text: "+ New event"; onClicked: root.openNewEvent() }
+                LogosButton { text: "+ Event"; onClicked: root.openNewEvent() }
             }
 
-            // weekday header
             RowLayout {
                 Layout.fillWidth: true; Layout.leftMargin: Theme.spacing.medium; Layout.rightMargin: Theme.spacing.medium; spacing: 2
                 Repeater {
@@ -217,12 +214,11 @@ Item {
                 }
             }
 
-            // month grid
             GridLayout {
                 id: grid
-                Layout.fillWidth: true
-                Layout.preferredHeight: 300
-                Layout.leftMargin: Theme.spacing.medium; Layout.rightMargin: Theme.spacing.medium; Layout.topMargin: 4
+                Layout.fillWidth: true; Layout.fillHeight: true   // month fills the pane now
+                Layout.leftMargin: Theme.spacing.medium; Layout.rightMargin: Theme.spacing.medium
+                Layout.topMargin: 4; Layout.bottomMargin: Theme.spacing.medium
                 columns: 7; rowSpacing: 2; columnSpacing: 2
 
                 Repeater {
@@ -231,7 +227,6 @@ Item {
                         id: cell
                         Layout.fillWidth: true; Layout.fillHeight: true
                         radius: Theme.spacing.radiusSmall
-                        // first cell = Monday on/before the 1st of viewMonth
                         property date cellDate: {
                             var first = new Date(root.viewMonth.getFullYear(), root.viewMonth.getMonth(), 1)
                             var offset = (first.getDay() + 6) % 7
@@ -264,53 +259,64 @@ Item {
                     }
                 }
             }
+        }
 
-            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.palette.borderHairline; Layout.topMargin: Theme.spacing.small }
+        // ── pane 3: agenda (resizable) ─────────────────────────────────────
+        Rectangle {
+            SplitView.preferredWidth: 320
+            SplitView.minimumWidth: 220
+            color: Theme.palette.backgroundInset
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: Theme.spacing.medium
+                spacing: Theme.spacing.small
 
-            // day detail
-            LogosText {
-                text: Qt.formatDate(root.selectedDay, "dddd, MMMM d")
-                color: Theme.palette.text; font.pixelSize: 16; font.weight: Theme.typography.weightMedium
-                Layout.margins: Theme.spacing.medium
-            }
-            // Wrap the list in an Item so the ColumnLayout gives it a real height
-            // (a bare ListView with Layout.fillHeight can collapse to 0). The empty
-            // state is a sibling of the ListView inside this Item, so it shows even
-            // when the list is empty.
-            Item {
-                Layout.fillWidth: true; Layout.fillHeight: true
-                Layout.leftMargin: Theme.spacing.medium; Layout.rightMargin: Theme.spacing.medium
-                Layout.bottomMargin: Theme.spacing.medium
-
-                ListView {
-                    id: dayList
-                    anchors.fill: parent; clip: true
-                    model: root.eventsOnDay(root.selectedDay)
-                    spacing: Theme.spacing.small
-                    delegate: Rectangle {
-                        width: dayList.width; height: 56; radius: Theme.spacing.radiusMedium
-                        color: Theme.palette.backgroundInset
-                        RowLayout {
-                            anchors.fill: parent; anchors.leftMargin: Theme.spacing.medium; anchors.rightMargin: Theme.spacing.medium; spacing: Theme.spacing.medium
-                            Rectangle { width: 6; height: 36; radius: 3; color: root.calColor(modelData.calendarId); Layout.alignment: Qt.AlignVCenter }
-                            ColumnLayout {
-                                Layout.fillWidth: true; spacing: 2
-                                LogosText { text: modelData.title || "(untitled)"; color: Theme.palette.text; font.pixelSize: 15; font.weight: Theme.typography.weightMedium; elide: Text.ElideRight; Layout.fillWidth: true }
-                                LogosText {
-                                    text: root.fmtTime(modelData.startTime) + " – " + root.fmtTime(modelData.endTime)
-                                          + "   " + root.calName(modelData.calendarId)
-                                    color: Theme.palette.textSecondary; font.pixelSize: 12; elide: Text.ElideRight; Layout.fillWidth: true
-                                }
-                            }
-                        }
-                        MouseArea { anchors.fill: parent; onClicked: root.openEditEvent(modelData) }
-                    }
+                LogosText {
+                    text: Qt.formatDate(root.selectedDay, "dddd")
+                    color: Theme.palette.text; font.pixelSize: 18; font.weight: Theme.typography.weightMedium
                 }
                 LogosText {
-                    anchors.centerIn: parent
-                    visible: dayList.count === 0
-                    text: "No events on this day. Click “+ New event”."
-                    color: Theme.palette.textTertiary; font.pixelSize: 13
+                    text: Qt.formatDate(root.selectedDay, "MMMM d, yyyy")
+                    color: Theme.palette.textSecondary; font.pixelSize: 13
+                }
+                Rectangle { Layout.fillWidth: true; height: 1; color: Theme.palette.borderHairline }
+
+                Item {
+                    Layout.fillWidth: true; Layout.fillHeight: true
+                    ListView {
+                        id: dayList
+                        anchors.fill: parent; clip: true
+                        model: root.eventsOnDay(root.selectedDay)
+                        spacing: Theme.spacing.small
+                        delegate: Rectangle {
+                            width: dayList.width; height: 62; radius: Theme.spacing.radiusMedium
+                            color: Theme.palette.backgroundSecondary
+                            RowLayout {
+                                anchors.fill: parent; anchors.margins: Theme.spacing.small; spacing: Theme.spacing.small
+                                Rectangle { width: 5; height: 42; radius: 3; color: root.calColor(modelData.calendarId); Layout.alignment: Qt.AlignVCenter }
+                                ColumnLayout {
+                                    Layout.fillWidth: true; spacing: 2
+                                    LogosText { text: modelData.title || "(untitled)"; color: Theme.palette.text; font.pixelSize: 14; font.weight: Theme.typography.weightMedium; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    LogosText {
+                                        text: root.fmtTime(modelData.startTime) + " – " + root.fmtTime(modelData.endTime)
+                                        color: Theme.palette.textSecondary; font.pixelSize: 12; elide: Text.ElideRight; Layout.fillWidth: true
+                                    }
+                                    LogosText {
+                                        text: root.calName(modelData.calendarId); visible: text.length > 0
+                                        color: root.calColor(modelData.calendarId); font.pixelSize: 11; elide: Text.ElideRight; Layout.fillWidth: true
+                                    }
+                                }
+                            }
+                            MouseArea { anchors.fill: parent; onClicked: root.openEditEvent(modelData) }
+                        }
+                    }
+                    LogosText {
+                        anchors.centerIn: parent; width: parent.width - 20
+                        visible: dayList.count === 0
+                        text: "No events on this day.\nClick “+ Event” to add one."
+                        horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap
+                        color: Theme.palette.textTertiary; font.pixelSize: 13
+                    }
                 }
             }
         }
