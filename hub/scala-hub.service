@@ -1,0 +1,20 @@
+[Unit]
+Description=Scala headless hub (logoscore daemon + scala core, pinned to the logos.test fleet)
+Documentation=https://github.com/jimmy-claw/scala
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/scala/hub/scala-hub.sh
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+# Optional overrides:
+# Environment=LOGOSCORE=%h/logoscore-new/result/bin/logoscore
+# Environment=SCALA_MODULES_DIR=%h/scala-hub/lmods
+# Environment=SCALA_CORE_DATA=%h/.scala-core-hub
+# Environment=SCALA_DEVICE_ID=scala-hub
+
+[Install]
+WantedBy=default.target
