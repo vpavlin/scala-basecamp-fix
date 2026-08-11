@@ -6,7 +6,7 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
-import { store, Calendar, CalEvent } from "./src/lib/store";
+import { store, Calendar, CalEvent, colorForId } from "./src/lib/store";
 import {
   onChange, startSyncing, joinFromInvite, createEvent, updateEvent, deleteEvent,
   createCalendar, buildInvite, getSharedNode, setSharedNode,
@@ -68,7 +68,7 @@ export default function App() {
   }, [refresh]);
 
   const writable = useMemo(() => cals.filter((c) => c.encryptionKey), [cals]);
-  const colorFor = useCallback((id: string) => cals.find((c) => c.id === id)?.color || C.primary, [cals]);
+  const colorFor = useCallback((id: string) => colorForId(id), []);
   const dayEvents = useMemo(
     () => events.filter((e) => sameDay(new Date(e.startTime), selected)).sort((a, b) => a.startTime - b.startTime),
     [events, selected],
@@ -185,7 +185,7 @@ export default function App() {
               {cals.length === 0 && <Text style={s.sub}>None yet.</Text>}
               {cals.map((c) => (
                 <View key={c.id} style={s.calRow}>
-                  <View style={[s.dot, { backgroundColor: c.color }]} />
+                  <View style={[s.dot, { backgroundColor: colorForId(c.id) }]} />
                   <Text style={s.calName}>{c.name}</Text>
                   {c.encryptionKey ? <Pressable onPress={() => showShare(c)}><Text style={s.share}>Share</Text></Pressable> : <Text style={s.sub}>local</Text>}
                 </View>

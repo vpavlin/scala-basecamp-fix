@@ -77,9 +77,14 @@ Item {
         }
         events = all
     }
+    // Deterministic color derived from the calendar id — SAME on desktop + mobile,
+    // so a calendar looks consistent across devices regardless of a stored color.
+    readonly property var calPalette: ["#a6e3a1","#89b4fa","#f9e2af","#f38ba8","#cba6f7","#94e2d5","#fab387","#74c7ec","#eba0ac","#b4befe"]
     function calColor(calId) {
-        for (var i = 0; i < calendars.length; i++) if (calendars[i].id === calId) return calendars[i].color || Theme.palette.primary
-        return Theme.palette.primary
+        if (!calId) return Theme.palette.primary
+        var h = 0
+        for (var i = 0; i < calId.length; i++) h = (h * 31 + calId.charCodeAt(i)) >>> 0
+        return root.calPalette[h % root.calPalette.length]
     }
     function calName(calId) {
         for (var i = 0; i < calendars.length; i++) if (calendars[i].id === calId) return calendars[i].name
@@ -162,7 +167,7 @@ Item {
                         color: root.filterCalId === modelData.id ? Theme.palette.backgroundSecondary : "transparent"
                         RowLayout {
                             anchors.fill: parent; anchors.leftMargin: Theme.spacing.small; anchors.rightMargin: Theme.spacing.small; spacing: Theme.spacing.small
-                            Rectangle { width: 12; height: 12; radius: 6; color: modelData.color || Theme.palette.primary }
+                            Rectangle { width: 12; height: 12; radius: 6; color: root.calColor(modelData.id) }
                             LogosText { text: modelData.name || "(unnamed)"; color: Theme.palette.text; font.pixelSize: 14; Layout.fillWidth: true; elide: Text.ElideRight }
                             LogosText {
                                 text: "share"; color: Theme.palette.primary; font.pixelSize: 12
@@ -268,35 +273,43 @@ Item {
                 color: Theme.palette.text; font.pixelSize: 16; font.weight: Theme.typography.weightMedium
                 Layout.margins: Theme.spacing.medium
             }
-            ListView {
-                Layout.fillWidth: true; Layout.fillHeight: true; clip: true
+            // Wrap the list in an Item so the ColumnLayout gives it a real height
+            // (a bare ListView with Layout.fillHeight can collapse to 0). The empty
+            // state is a sibling of the ListView inside this Item, so it shows even
+            // when the list is empty.
+            Item {
+                Layout.fillWidth: true; Layout.fillHeight: true
                 Layout.leftMargin: Theme.spacing.medium; Layout.rightMargin: Theme.spacing.medium
-                id: dayList
-                model: root.eventsOnDay(root.selectedDay)
-                spacing: Theme.spacing.small
-                delegate: Rectangle {
-                    width: ListView.view.width; height: 56; radius: Theme.spacing.radiusMedium
-                    color: Theme.palette.backgroundInset
-                    RowLayout {
-                        anchors.fill: parent; anchors.leftMargin: Theme.spacing.medium; anchors.rightMargin: Theme.spacing.medium; spacing: Theme.spacing.medium
-                        Rectangle { width: 6; Layout.fillHeight: true; Layout.topMargin: 10; Layout.bottomMargin: 10; radius: 3; color: root.calColor(modelData.calendarId) }
-                        ColumnLayout {
-                            Layout.fillWidth: true; spacing: 2
-                            LogosText { text: modelData.title || "(untitled)"; color: Theme.palette.text; font.pixelSize: 15; font.weight: Theme.typography.weightMedium; elide: Text.ElideRight; Layout.fillWidth: true }
-                            LogosText {
-                                text: root.fmtTime(modelData.startTime) + " – " + root.fmtTime(modelData.endTime)
-                                      + "   " + root.calName(modelData.calendarId)
-                                color: Theme.palette.textSecondary; font.pixelSize: 12; elide: Text.ElideRight; Layout.fillWidth: true
+                Layout.bottomMargin: Theme.spacing.medium
+
+                ListView {
+                    id: dayList
+                    anchors.fill: parent; clip: true
+                    model: root.eventsOnDay(root.selectedDay)
+                    spacing: Theme.spacing.small
+                    delegate: Rectangle {
+                        width: dayList.width; height: 56; radius: Theme.spacing.radiusMedium
+                        color: Theme.palette.backgroundInset
+                        RowLayout {
+                            anchors.fill: parent; anchors.leftMargin: Theme.spacing.medium; anchors.rightMargin: Theme.spacing.medium; spacing: Theme.spacing.medium
+                            Rectangle { width: 6; height: 36; radius: 3; color: root.calColor(modelData.calendarId); Layout.alignment: Qt.AlignVCenter }
+                            ColumnLayout {
+                                Layout.fillWidth: true; spacing: 2
+                                LogosText { text: modelData.title || "(untitled)"; color: Theme.palette.text; font.pixelSize: 15; font.weight: Theme.typography.weightMedium; elide: Text.ElideRight; Layout.fillWidth: true }
+                                LogosText {
+                                    text: root.fmtTime(modelData.startTime) + " – " + root.fmtTime(modelData.endTime)
+                                          + "   " + root.calName(modelData.calendarId)
+                                    color: Theme.palette.textSecondary; font.pixelSize: 12; elide: Text.ElideRight; Layout.fillWidth: true
+                                }
                             }
                         }
+                        MouseArea { anchors.fill: parent; onClicked: root.openEditEvent(modelData) }
                     }
-                    MouseArea { anchors.fill: parent; onClicked: root.openEditEvent(modelData) }
                 }
-                footer: Item { width: 1; height: Theme.spacing.large }
-                Label {
+                LogosText {
                     anchors.centerIn: parent
                     visible: dayList.count === 0
-                    text: "No events. Click “+ New event”."
+                    text: "No events on this day. Click “+ New event”."
                     color: Theme.palette.textTertiary; font.pixelSize: 13
                 }
             }

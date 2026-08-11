@@ -235,6 +235,21 @@ void ScalaImpl::onContextReady() {
 
     m_sync->setTransport(std::move(tx));
     m_ctxReady = true;
+
+    // Register keys + mark syncing for every ALREADY-shared calendar loaded from
+    // disk. startSync() was only called from shareCalendar/joinSharedCalendar, so
+    // after a restart a persisted shared calendar had its topic joined on the wire
+    // (transport onReady) but NO key in m_activeTopics → isSyncing()=false →
+    // createEvent never broadcast and inbound messages couldn't be decrypted. This
+    // is why nothing synced after a restart. Register them now.
+    {
+        auto calendars = m_store->listCalendars();
+        for (const auto& cal : calendars) {
+            if (cal.isShared && !cal.encryptionKey.isEmpty())
+                m_sync->startSync(cal.id.toStdString(), cal.encryptionKey.toStdString());
+        }
+    }
+
     m_sync->bootstrap();
 }
 
@@ -272,12 +287,19 @@ std::string ScalaImpl::createCalendar(const std::string& name, const std::string
     cal.name = QString::fromStdString(name);
     cal.color = QString::fromStdString(color);
     cal.creatorId = QString::fromStdString(m_identity);
-    cal.isShared = false;
+    // Shared-by-default (kym/qaku/mobile pattern): every calendar gets a key and
+    // syncs immediately; "private" = a key you simply never hand out. This makes
+    // sync work without a separate "share" step and matches the mobile app (whose
+    // createCalendar also generates a key up front), so a calendar created on either
+    // side is on the same footing.
+    cal.encryptionKey = QString::fromStdString(generateUuid() + generateUuid());
+    cal.isShared = true;
     qint64 now = QDateTime::currentMSecsSinceEpoch();
     cal.createdAt = now;
     cal.updatedAt = now;
 
     m_store->saveCalendar(cal);
+    m_sync->startSync(cal.id.toStdString(), cal.encryptionKey.toStdString());
     return cal.id.toStdString();
 }
 

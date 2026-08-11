@@ -75,3 +75,13 @@ export const store = {
     return events.filter((e) => e.calendarId === calendarId && !e.deleted);
   },
 };
+
+// Deterministic calendar color from its id — MUST match the desktop
+// (CalendarView.qml calColor): same palette + hash, so a calendar shows the same
+// color on every device regardless of any stored color.
+const CAL_PALETTE = ["#a6e3a1","#89b4fa","#f9e2af","#f38ba8","#cba6f7","#94e2d5","#fab387","#74c7ec","#eba0ac","#b4befe"];
+export function colorForId(id: string): string {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return CAL_PALETTE[h % CAL_PALETTE.length];
+}
