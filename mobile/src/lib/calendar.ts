@@ -3,7 +3,9 @@
 // `scala://` invite links the desktop uses to share a calendar's key.
 import * as Crypto from "expo-crypto";
 import * as SecureStore from "expo-secure-store";
+import { fromByteArray, toByteArray } from "base64-js";
 import { store, Calendar, CalEvent } from "./store";
+import { utf8Bytes, utf8Decode } from "./utf8";
 import * as sync from "./scala-sync";
 
 // ── device identity (SDS senderId) ──────────────────────────────────────────
@@ -19,23 +21,47 @@ export async function getDeviceId(): Promise<string> {
   return id;
 }
 
-// ── scala:// invite links (matches the desktop generateShareLink/parseShareLink) ─
-// Form: scala://join?cal=<calendarId>&key=<encryptionKey>&name=<name>
+// ── scala:// invite links — MUST match the desktop core byte-for-byte ─────────
+// Desktop (scala_impl.cpp generateShareLink/parseShareLink) format:
+//   scala://join?id=<calendarId>&key=<b64url(encryptionKey)>&name=<name>
+// where `key` is the encryptionKey string base64URL-encoded (URL-safe, no padding)
+// of its UTF-8 bytes. NOT `cal=` and NOT the raw key (that was the incompatibility).
+function b64urlEncode(s: string): string {
+  return fromByteArray(utf8Bytes(s)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function b64urlDecode(s: string): string {
+  let b = s.replace(/-/g, "+").replace(/_/g, "/");
+  while (b.length % 4) b += "=";
+  return utf8Decode(toByteArray(b));
+}
+// Robust query parse (RN Hermes has spotty URLSearchParams).
+function parseQuery(q: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const pair of q.split("&")) {
+    const i = pair.indexOf("=");
+    if (i < 0) continue;
+    try {
+      out[decodeURIComponent(pair.slice(0, i))] = decodeURIComponent(pair.slice(i + 1).replace(/\+/g, "%20"));
+    } catch { /* skip malformed */ }
+  }
+  return out;
+}
+
 export function parseInvite(link: string): { calendarId: string; key: string; name?: string } | null {
   try {
     const q = link.split("?")[1] || "";
-    const params = new URLSearchParams(q);
-    const calendarId = params.get("cal") || "";
-    const key = params.get("key") || "";
-    if (!calendarId || !key) return null;
-    return { calendarId, key, name: params.get("name") || undefined };
+    const p = parseQuery(q);
+    const id = p["id"] || "";
+    const keyB64 = p["key"] || "";
+    if (!id || !keyB64) return null;
+    return { calendarId: id, key: b64urlDecode(keyB64), name: p["name"] || undefined };
   } catch {
     return null;
   }
 }
 export function buildInvite(cal: Calendar): string {
-  const p = new URLSearchParams({ cal: cal.id, key: cal.encryptionKey || "", name: cal.name });
-  return `scala://join?${p.toString()}`;
+  const key = b64urlEncode(cal.encryptionKey || "");
+  return `scala://join?id=${encodeURIComponent(cal.id)}&key=${key}&name=${encodeURIComponent(cal.name)}`;
 }
 
 // ── inbound: apply a SyncMessage to the local store ─────────────────────────
