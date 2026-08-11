@@ -22,6 +22,12 @@ set -euo pipefail
 
 LOGOSCORE="${LOGOSCORE:-$HOME/logoscore-new/result/bin/logoscore}"
 SCALA_MODULES_DIR="${SCALA_MODULES_DIR:-$HOME/scala-hub/lmods}"
+# ISOLATE the daemon: logoscore is ONE global daemon per config dir (socket+token
+# live here). Without this, scala shares ~/.logoscore with the kym hub and the two
+# clobber each other's single daemon. A dedicated dir gives scala its own daemon,
+# coexisting with kym-hub (default dir) and the qaku hub (~/.logoscore-qaku) — the
+# proven multi-hub pattern. Its own waku node binds an OS-assigned port, so no clash.
+export LOGOSCORE_CONFIG_DIR="${LOGOSCORE_CONFIG_DIR:-$HOME/.logoscore-scala}"
 export SCALA_CORE_DATA="${SCALA_CORE_DATA:-$HOME/.scala-core-hub}"
 export SCALA_DEVICE_ID="${SCALA_DEVICE_ID:-scala-hub}"
 # Cross-thread receive: delivery emits messageReceived off the FFI callback thread;
@@ -41,6 +47,12 @@ mkdir -p "$SCALA_CORE_DATA"
 sleep 1
 
 log "starting logoscore daemon (modules: $SCALA_MODULES_DIR, data: $SCALA_CORE_DATA)"
+# `-D` runs a foreground daemon SUPERVISOR (it does NOT detach). Background it so the
+# launcher can drive the daemon by RPC (status/load-module); $DAEMON_PID is the
+# supervisor, alive for the daemon's lifetime, so `wait` at the end blocks correctly.
+# (The single-global-daemon-per-config-dir is why LOGOSCORE_CONFIG_DIR isolation
+# above is load-bearing: without it, kym-hub's daemon and this one clobber each other
+# and each restart-loops.)
 "$LOGOSCORE" -D -m "$SCALA_MODULES_DIR" &
 DAEMON_PID=$!
 cleanup() { log "stopping daemon"; "$LOGOSCORE" stop >/dev/null 2>&1 || kill "$DAEMON_PID" 2>/dev/null || true; }
@@ -48,7 +60,7 @@ trap cleanup EXIT INT TERM
 
 for _ in $(seq 1 60); do
   "$LOGOSCORE" status >/dev/null 2>&1 && break
-  kill -0 "$DAEMON_PID" 2>/dev/null || { log "daemon exited during startup"; wait "$DAEMON_PID"; exit 1; }
+  kill -0 "$DAEMON_PID" 2>/dev/null || { log "daemon exited during startup"; exit 1; }
   sleep 1
 done
 log "daemon up; loading scala"
@@ -57,5 +69,7 @@ log "daemon up; loading scala"
 CALS=$(python3 -c "import json,sys;print(len(json.load(open('$SCALA_CORE_DATA/calendars.json'))))" 2>/dev/null || echo 0)
 log "hub running — scala loaded, $CALS calendar(s) in registry, delivery pinned to logos.test."
 [[ "$CALS" == 0 ]] && log "NOTE: registry empty — seed a calendar (scala-hub-seed.sh <invite>) then restart, or the hub joins no channels."
-"$LOGOSCORE" status || true
+
+# Stay foreground for the daemon supervisor's lifetime so systemd tracks liveness
+# and restarts us if it dies.
 wait "$DAEMON_PID"
