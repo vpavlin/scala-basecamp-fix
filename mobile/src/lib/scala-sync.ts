@@ -23,6 +23,11 @@ export function topicForCalendar(calendarId: string): string {
 // The transport already tracks per-stage counters + diag; this just reads them so
 // the phone stops being a black box: publish confirmation (txAttempt vs txTotal vs
 // txFail + txErr), receive stages (rxOpened/rxOpenFail/rxNew/rxDup), and node status.
+// Pull live node health (peers/mesh) before snapshotting — on the shared-service
+// path this fetches the shared node's metrics over AIDL. Call before getDebug().
+export function refreshDebug(): Promise<void> {
+  return (transport as any).refreshDebug?.() ?? Promise.resolve();
+}
 export function getDebug() {
   const t = transport as any;
   const c = t.counters || {};

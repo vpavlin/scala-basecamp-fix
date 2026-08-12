@@ -11,7 +11,7 @@ import {
   onChange, startSyncing, joinFromInvite, createEvent, updateEvent, deleteEvent,
   createCalendar, buildInvite, getSharedNode, setSharedNode,
 } from "./src/lib/calendar";
-import { deliveryAvailable, getDebug } from "./src/lib/scala-sync";
+import { deliveryAvailable, getDebug, refreshDebug } from "./src/lib/scala-sync";
 import { MonthGrid } from "./src/components/MonthGrid";
 import { EventModal, EventDraft } from "./src/components/EventModal";
 import { Drawer } from "./src/components/Drawer";
@@ -52,9 +52,10 @@ export default function App() {
   const [dbg, setDbg] = useState<any>(null); // non-null → Debug panel open
   useEffect(() => {
     if (!dbg) return;
-    const tick = () => setDbg({ ...getDebug(), t: Date.now() });
+    let alive = true;
+    const tick = async () => { await refreshDebug().catch(() => {}); if (alive) setDbg({ ...getDebug(), t: Date.now() }); };
     const id = setInterval(tick, 1500);
-    return () => clearInterval(id);
+    return () => { alive = false; clearInterval(id); };
   }, [!!dbg]);
   const [scanning, setScanning] = useState(false);
 
