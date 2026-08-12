@@ -165,8 +165,13 @@ void ScalaImpl::onContextReady() {
         modules().delivery_module.channelCreateAsync(id, ct, sid, [cb](auto r) { cb(r.success, r.error); });
     };
     ops.channelSend = [this](const std::string& id, const LogosMap& payload, Tx::Cb cb) {
-        std::string data = payload.dump(); std::vector<uint8_t> bytes(data.begin(), data.end());
-        modules().delivery_module.channelSendAsync(id, bytes, [cb](auto r) { cb(r.success, r.error); });
+        // Pass the LogosMap payload STRAIGHT THROUGH, exactly as qaku_core does
+        // (qaku_core_impl.cpp channelSendAsync(topic, p, …)). `payload` is the byte-array
+        // LogosMap from bytesPayload(b64) = [65,66,…]; the module serializes it to those
+        // raw bytes. The old `payload.dump()` serialized it to the JSON TEXT "[65,66,…]"
+        // and sent THAT — so every desktop/hub message was undecodable garbage on the
+        // wire (mobile received nothing). Never dump(); hand the module the payload.
+        modules().delivery_module.channelSendAsync(id, payload, [cb](auto r) { cb(r.success, r.error); });
     };
     ops.onMessage = [this](Tx::RecvCb handler) {
         modules().delivery_module.onMessageReceived(
