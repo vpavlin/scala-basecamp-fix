@@ -45,6 +45,12 @@ public:
     /// Create an event in a calendar. Returns the event ID.
     std::string createEvent(const std::string& calendarId, const std::string& eventJson);
 
+    /// Create an event from explicit scalar fields (no JSON, no commas) — usable from
+    /// the logoscore CLI, which splits args on commas and types numbers as int. start/end
+    /// are epoch-ms passed as STRINGS. Lets a headless hub inject a real, visible event.
+    std::string createEventAt(const std::string& calendarId, const std::string& title,
+                              const std::string& startMs, const std::string& endMs);
+
     /// Update an existing event. Returns the event ID.
     std::string updateEvent(const std::string& eventJson);
 

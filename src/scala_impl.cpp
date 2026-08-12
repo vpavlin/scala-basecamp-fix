@@ -265,6 +265,19 @@ std::string ScalaImpl::createEvent(const std::string& calendarId, const std::str
     publishAndApply(calendarId, mkEvent(scala::ET::EVENT_PUT, p));
     return p["id"].get<std::string>();
 }
+std::string ScalaImpl::createEventAt(const std::string& calendarId, const std::string& title,
+                                     const std::string& startMs, const std::string& endMs) {
+    long long start = 0, end = 0;
+    try { start = std::stoll(startMs); } catch (...) { return ""; }
+    try { end = endMs.empty() ? start + 3600000 : std::stoll(endMs); } catch (...) { end = start + 3600000; }
+    json p;
+    p["id"] = generateUuid();
+    p["title"] = title;
+    p["startTime"] = start;
+    p["endTime"] = end;
+    publishAndApply(calendarId, mkEvent(scala::ET::EVENT_PUT, p));
+    return p["id"].get<std::string>();
+}
 std::string ScalaImpl::updateEvent(const std::string& eventJson) {
     json p = json::parse(eventJson, nullptr, false);
     if (p.is_discarded() || !p.is_object() || !p.contains("id")) return "";
