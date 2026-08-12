@@ -131,6 +131,10 @@ private:
     scala::Event mkEvent(const std::string& type, const scala::json& payload);
     void publishAndApply(const std::string& calId, const scala::Event& e);  // append locally + broadcast
     void applyIncoming(const std::string& calId, const std::string& eventJson);  // merge a received event
+    // ── catch-up (qaku SYNC_REQ + seed) ──────────────────────────────────────
+    void serveLog(const std::string& calId);      // re-broadcast our whole log (rate-limited) — answers a SYNC_REQ / seed on connect
+    void sendSyncReq(const std::string& calId);   // ask peers to re-serve (broadcast on join/connect)
+    std::map<std::string, long long> m_lastServe; // per-calendar rate-limit for serveLog
     // Idempotently (re)attempt the delivery bootstrap. Called from onContextReady
     // AND lazily from the polled read methods (kym self-drive pattern) so the node
     // comes up even if the lifecycle hook is flaky / there were no shared calendars

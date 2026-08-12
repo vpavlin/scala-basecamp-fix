@@ -35,6 +35,7 @@ namespace ET {
     constexpr const char* CAL_META  = "cal.meta";    // {name,color}          — calendar metadata (LWW)
     constexpr const char* EVENT_PUT = "event.put";   // {id,title,startTime,…}— create/edit an event (LWW upsert by id)
     constexpr const char* EVENT_DEL = "event.del";   // {id}                  — tombstone an event (terminal)
+    constexpr const char* SYNC_REQ  = "sync.req";    // {from}                — CATCH-UP: a joining peer asks everyone to re-serve their log. NOT stored, NOT folded (foldCalendar ignores unknown types); handled in the receive path → serveLog().
 }
 
 inline json eventToJson(const Event& e) {

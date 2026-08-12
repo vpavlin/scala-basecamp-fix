@@ -133,7 +133,28 @@ void ScalaImpl::applyIncoming(const std::string& calId, const std::string& event
     if (j.is_discarded() || !j.is_object()) return;
     scala::Event e = scala::eventFromJson(j);
     if (e.id.empty()) return;
+    // CATCH-UP: a peer asking for state (SYNC_REQ) — re-serve our log, don't store it.
+    if (e.type == scala::ET::SYNC_REQ) { serveLog(calId); return; }
     m_store->appendEvent(calId, e);   // idempotent (dedup by id); the view's poll refolds
+}
+
+// Re-broadcast the whole log for a calendar (answers a SYNC_REQ / seeds on connect).
+// Rate-limited per calendar so overlapping requests can't restack into a shard flood
+// (qaku's rule). Idempotent on the receiver — everything dedups by event id.
+void ScalaImpl::serveLog(const std::string& calId) {
+    long long now = nowMs();
+    auto it = m_lastServe.find(calId);
+    if (it != m_lastServe.end() && now - it->second < 3000) return;
+    m_lastServe[calId] = now;
+    for (const auto& e : m_store->log(calId))
+        m_sync->sendEvent(calId, scala::eventToJson(e).dump());
+}
+
+// Ask peers to re-serve their log (broadcast a SYNC_REQ on join/connect). The
+// sync.req carries no state and is never stored/folded.
+void ScalaImpl::sendSyncReq(const std::string& calId) {
+    scala::Event e = mkEvent(scala::ET::SYNC_REQ, json{{"from", m_identity}});
+    m_sync->sendEvent(calId, scala::eventToJson(e).dump());
 }
 
 // ── context lifecycle ────────────────────────────────────────────────────────
@@ -210,7 +231,11 @@ void ScalaImpl::onContextReady() {
           [this](const std::string& topic, const std::string& sealedOnceDecoded) {
               m_sync->handleReceive(topic, sealedOnceDecoded);
           },
-          /*onReady*/ {},
+          /*onReady*/ [this]{
+              // Node connected: seed every calendar's log for peers already listening,
+              // and ask peers to re-serve theirs so WE catch up (qaku seed + SYNC_REQ).
+              for (const auto& c : m_store->calendars()) { serveLog(c.id); sendSyncReq(c.id); }
+          },
           /*setStatus*/ [this](const std::string& s) { m_deliveryStatus = s; });
 
     m_sync->setTransport(std::move(tx));
@@ -339,6 +364,7 @@ std::string ScalaImpl::shareCalendar(const std::string& calendarId) {
 bool ScalaImpl::joinSharedCalendar(const std::string& calendarId, const std::string& encryptionKey) {
     m_store->upsertCalendar({ calendarId, encryptionKey, "", "" });
     m_sync->startSync(calendarId, encryptionKey);
+    sendSyncReq(calendarId);   // just joined an existing calendar → pull its history
     return true;
 }
 std::string ScalaImpl::getSyncStatus(const std::string& calendarId) {
@@ -367,6 +393,7 @@ bool ScalaImpl::handleShareLink(const std::string& link) {
     if (id.empty() || key.empty()) return false;
     m_store->upsertCalendar({ id, key, name, "" });
     m_sync->startSync(id, key);
+    sendSyncReq(id);   // just joined → pull history
     return true;
 }
 
