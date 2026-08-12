@@ -46,6 +46,24 @@ async function publishAndApply(calId: string, e: Event): Promise<void> {
   await sync.sendEvent(calId, JSON.stringify(eventToJson(e))).catch(() => {});
 }
 
+// ── catch-up (qaku SYNC_REQ + seed) ──────────────────────────────────────────
+const lastServe: Record<string, number> = {};
+// Re-broadcast our whole log for a calendar (answers a SYNC_REQ). Rate-limited per
+// calendar so overlapping requests can't flood; idempotent (peers dedup by id).
+async function serveLog(calId: string): Promise<void> {
+  const now = Date.now();
+  if (lastServe[calId] && now - lastServe[calId] < 3000) return;
+  lastServe[calId] = now;
+  for (const e of await store.getLog(calId)) {
+    await sync.sendEvent(calId, JSON.stringify(eventToJson(e))).catch(() => {});
+  }
+}
+// Ask peers to re-serve (broadcast a SYNC_REQ on join). Not stored/folded.
+async function sendSyncReq(calId: string): Promise<void> {
+  const e = await mkEvent(ET.SYNC_REQ, { from: deviceId });
+  await sync.sendEvent(calId, JSON.stringify(eventToJson(e))).catch(() => {});
+}
+
 // ── scala:// invite links — MUST match the desktop core byte-for-byte ─────────
 // scala://join?id=<calendarId>&key=<b64url(encryptionKey)>&name=<name>
 function b64urlEncode(s: string): string {
@@ -92,6 +110,8 @@ sync.setEventHandler((calendarId, eventJson) => {
       const j = JSON.parse(eventJson);
       const e = eventFromJson(j);
       if (!e.id) return;
+      // CATCH-UP: a peer asking for state — re-serve our log, don't store it.
+      if (e.type === ET.SYNC_REQ) { await serveLog(calendarId); return; }
       (await ensureClock()).receive(e.hlc); // advance past the ingested cause
       const isNew = await store.appendEvent(calendarId, e); // idempotent (dedup by id)
       if (isNew) notifyChange();
@@ -164,6 +184,7 @@ export async function joinFromInvite(link: string): Promise<Calendar | null> {
     isShared: true,
   });
   await sync.joinCalendar(inv.calendarId, inv.key);
+  await sendSyncReq(inv.calendarId).catch(() => {}); // just joined → pull history
   notifyChange();
   const f = (await store.listCalendars()).find((c) => c.id === inv.calendarId) || null;
   return f;
@@ -187,6 +208,12 @@ export async function startSyncing(shared?: boolean, onStatus?: (s: string) => v
     shared: useShared,
     onStatus,
   });
+  // Catch-up: ask peers to re-serve each calendar's log. Retried a few times to beat a
+  // still-forming mesh (a dropped first SYNC_REQ otherwise = no history). qaku pattern.
+  const askAll = () => { for (const c of regs.filter((r) => r.key)) sendSyncReq(c.id).catch(() => {}); };
+  askAll();
+  setTimeout(askAll, 9000);
+  setTimeout(askAll, 24000);
 }
 
 // ── tiny change bus so the UI can refresh after inbound/outbound edits ───────

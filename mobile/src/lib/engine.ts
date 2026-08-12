@@ -37,6 +37,7 @@ export const ET = {
   CAL_META: "cal.meta", // {name,color}           — calendar metadata (LWW)
   EVENT_PUT: "event.put", // {id,title,startTime,…} — create/edit an event (LWW upsert by id)
   EVENT_DEL: "event.del", // {id}                   — tombstone an event (terminal)
+  SYNC_REQ: "sync.req", // {from}                  — catch-up: ask peers to re-serve; NOT stored/folded
 } as const;
 
 export function eventToJson(e: Event): any {
