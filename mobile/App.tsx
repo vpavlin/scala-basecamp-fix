@@ -2,7 +2,7 @@
 // Month grid + day detail + event editor; calendars live in a left drawer.
 import React, { useEffect, useState, useCallback, useMemo } from "react";
 import {
-  View, Text, TextInput, Pressable, Switch, ScrollView, StyleSheet, Alert,
+  View, Text, TextInput, Pressable, Switch, ScrollView, StyleSheet, Alert, Modal,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
@@ -11,7 +11,7 @@ import {
   onChange, startSyncing, joinFromInvite, createEvent, updateEvent, deleteEvent,
   createCalendar, buildInvite, getSharedNode, setSharedNode,
 } from "./src/lib/calendar";
-import { deliveryAvailable } from "./src/lib/scala-sync";
+import { deliveryAvailable, getDebug } from "./src/lib/scala-sync";
 import { MonthGrid } from "./src/components/MonthGrid";
 import { EventModal, EventDraft } from "./src/components/EventModal";
 import { Drawer } from "./src/components/Drawer";
@@ -49,6 +49,13 @@ export default function App() {
   const [invite, setInvite] = useState("");
   const [lastInvite, setLastInvite] = useState("");
   const [qr, setQr] = useState<{ value: string; title: string } | null>(null);
+  const [dbg, setDbg] = useState<any>(null); // non-null → Debug panel open
+  useEffect(() => {
+    if (!dbg) return;
+    const tick = () => setDbg({ ...getDebug(), t: Date.now() });
+    const id = setInterval(tick, 1500);
+    return () => clearInterval(id);
+  }, [!!dbg]);
   const [scanning, setScanning] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -132,7 +139,9 @@ export default function App() {
           </Pressable>
           <Pressable onPress={() => shiftMonth(1)} hitSlop={12}><Text style={s.nav}>›</Text></Pressable>
         </View>
-        <Text style={s.status}>{status} · {cals.length} calendar(s)</Text>
+        <Pressable onPress={() => setDbg({ ...getDebug(), t: Date.now() })}>
+          <Text style={s.status}>{status} · {cals.length} calendar(s) · <Text style={{ textDecorationLine: "underline" }}>debug</Text></Text>
+        </Pressable>
 
         <View style={s.grid}>
           <MonthGrid
@@ -226,6 +235,60 @@ export default function App() {
 
         <QRModal visible={!!qr} value={qr?.value || ""} title={qr?.title || "Invite"} onClose={() => setQr(null)} />
         <ScanModal visible={scanning} onScanned={onScanned} onClose={() => setScanning(false)} />
+
+        {/* Debug panel — live connection, publish confirmation, receive stages, event log */}
+        <Modal visible={!!dbg} animationType="slide" onRequestClose={() => setDbg(null)}>
+          <SafeAreaView style={{ flex: 1, backgroundColor: "#0f1115" }}>
+            <View style={{ flexDirection: "row", alignItems: "center", padding: 14 }}>
+              <Text style={{ color: "#e8eaed", fontSize: 18, fontWeight: "700", flex: 1 }}>Sync debug</Text>
+              <Pressable onPress={() => setDbg(null)} hitSlop={12}><Text style={{ color: "#6ea8fe", fontSize: 16 }}>Close</Text></Pressable>
+            </View>
+            <ScrollView style={{ flex: 1, paddingHorizontal: 14 }}>
+              {dbg && (() => {
+                const row = (k: string, v: any, warn = false) => (
+                  <View style={{ flexDirection: "row", paddingVertical: 3 }} key={k}>
+                    <Text style={{ color: "#9aa1ad", width: 130, fontFamily: "monospace", fontSize: 12 }}>{k}</Text>
+                    <Text style={{ color: warn ? "#f38ba8" : "#e8eaed", flex: 1, fontFamily: "monospace", fontSize: 12 }}>{String(v)}</Text>
+                  </View>
+                );
+                return (
+                  <>
+                    <Text style={{ color: "#89b4fa", marginTop: 8, marginBottom: 4, fontWeight: "700" }}>Node</Text>
+                    {row("backend", `${dbg.backend} (${shared ? "shared service" : "embedded"})`)}
+                    {row("mode", dbg.mode)}
+                    {row("routes", dbg.routes)}
+                    {row("peers / mesh", `${dbg.peers} / ${dbg.mesh}`)}
+                    {row("store", dbg.store || "—")}
+
+                    <Text style={{ color: "#89b4fa", marginTop: 12, marginBottom: 4, fontWeight: "700" }}>Publish (tx)</Text>
+                    {row("attempted", dbg.tx.attempt)}
+                    {row("sent OK", dbg.tx.sent)}
+                    {row("failed", dbg.tx.fail, dbg.tx.fail > 0)}
+                    {row("last error", dbg.tx.lastErr || "—", !!dbg.tx.lastErr)}
+
+                    <Text style={{ color: "#89b4fa", marginTop: 12, marginBottom: 4, fontWeight: "700" }}>Receive (rx)</Text>
+                    {row("raw", dbg.rx.raw)}
+                    {row("opened", dbg.rx.opened)}
+                    {row("open-fail", dbg.rx.openFail, dbg.rx.openFail > 0)}
+                    {row("new / dup", `${dbg.rx.new} / ${dbg.rx.dup}`)}
+                    {row("sample", dbg.sample || "—")}
+
+                    <Text style={{ color: "#89b4fa", marginTop: 12, marginBottom: 4, fontWeight: "700" }}>Event log ({events.length})</Text>
+                    {[...events].sort((a, b) => b.startTime - a.startTime).slice(0, 40).map((e) => (
+                      <View key={e.id} style={{ paddingVertical: 3, borderBottomWidth: 1, borderBottomColor: "#2a2e37" }}>
+                        <Text style={{ color: "#e8eaed", fontSize: 12 }}>{e.title}</Text>
+                        <Text style={{ color: "#9aa1ad", fontSize: 11, fontFamily: "monospace" }}>
+                          {new Date(e.startTime).toLocaleString()} · by {(e.creatorId || "?").slice(0, 16)}
+                        </Text>
+                      </View>
+                    ))}
+                    <View style={{ height: 40 }} />
+                  </>
+                );
+              })()}
+            </ScrollView>
+          </SafeAreaView>
+        </Modal>
 
         <EventModal
           visible={modal.open}

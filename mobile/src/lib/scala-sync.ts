@@ -19,6 +19,26 @@ export function topicForCalendar(calendarId: string): string {
   return `/scala/1/${calendarId}/json`;
 }
 
+// ── debug snapshot (surface in the app's Debug panel) ────────────────────────
+// The transport already tracks per-stage counters + diag; this just reads them so
+// the phone stops being a black box: publish confirmation (txAttempt vs txTotal vs
+// txFail + txErr), receive stages (rxOpened/rxOpenFail/rxNew/rxDup), and node status.
+export function getDebug() {
+  const t = transport as any;
+  const c = t.counters || {};
+  const d = t.diag || {};
+  return {
+    mode: t.getNodeMode?.() ?? "?",
+    backend: t.getCtx?.() ? "up" : "down",
+    routes: routes.length,
+    peers: c.peers, mesh: c.mesh,
+    tx: { attempt: c.txAttempt ?? 0, sent: c.txTotal ?? 0, fail: c.txFail ?? 0, lastErr: d.txErr || "" },
+    rx: { raw: c.rxRaw ?? 0, opened: c.rxOpened ?? 0, openFail: c.rxOpenFail ?? 0, new: c.rxNew ?? 0, dup: c.rxDup ?? 0 },
+    sample: t.getRxSample?.() ?? "",
+    store: t.getStoreInfo?.() ?? "",
+  };
+}
+
 // One route per shared calendar: its topic + the symmetric key we seal/open with.
 interface Route {
   calendarId: string;
