@@ -141,31 +141,27 @@ void ScalaImpl::applyIncoming(const std::string& calId, const std::string& event
     m_store->appendEvent(calId, e);   // idempotent (dedup by id); the view's poll refolds
 }
 
-// Answer a peer's SYNC_REQ: send ONLY the events it's missing (logos_sync delta
-// catch-up, replacing the old whole-log re-broadcast). If the requester's summary
-// shows it holds ids WE lack, we fire our own SYNC_REQ so one exchange converges
-// both sides. Rate-limited per calendar so overlapping requests can't flood
-// (logos-sync ADR 0004); receivers dedup by id regardless.
-void ScalaImpl::onSyncReq(const std::string& calId, const json& req) {
-    if (req.value("from", std::string()) == m_identity) return;   // ignore our own echo
-    long long now = nowMs();
-    auto it = m_lastServe.find(calId);
-    if (it != m_lastServe.end() && now - it->second < 3000) return;
-    m_lastServe[calId] = now;
-
-    auto ans = logos_sync::catchup::answerRequest(m_store->log(calId), req);
-    for (const auto& ev : ans.serve)
-        m_sync->sendEvent(calId, scala::eventToJson(ev).dump());   // the gap only
-    if (!ans.iLack.empty()) sendSyncReq(calId);                    // we're behind too → pull
+// Step the catch-up state machine for one incoming SYNC_REQ. `msg` is a single
+// RBSR range statement (fp/ids/need); respond() self-ignores our own `from` and
+// returns the exact events to serve plus the reply messages to publish. Recursive
+// Range-Based Set Reconciliation (logos-sync ADR 0004): only the id-exact delta is
+// transferred and every message is single-segment, so there's no whole-log serve
+// and no flood throttle to add — the exchange self-terminates on convergence.
+void ScalaImpl::onSyncReq(const std::string& calId, const json& msg) {
+    auto step = logos_sync::catchup::respond(m_store->log(calId), msg, m_identity);
+    for (const auto& ev : step.serve)                              // the missing events, exactly
+        m_sync->sendEvent(calId, scala::eventToJson(ev).dump());
+    for (const auto& r : step.replies)                            // fp/ids/need range replies
+        m_sync->sendEvent(calId, scala::eventToJson(mkEvent(scala::ET::SYNC_REQ, r)).dump());
 }
 
-// Publish a SYNC_REQ carrying the id-summary of what we already hold, so a peer
-// serves only what we're missing (a fresh calendar sends have:[] → gets it all).
+// Kick off catch-up: publish the initial reconciliation message (a bounded set of
+// range fingerprints over what we hold). A fresh calendar sends an empty-set
+// fingerprint and recurses down to receive everything; a slightly-behind one
+// converges on just the changed range.
 void ScalaImpl::sendSyncReq(const std::string& calId) {
-    json req = logos_sync::catchup::buildRequest(m_store->log(calId));  // {have:[id…]}
-    req["from"] = m_identity;                                            // for self-ignore
-    scala::Event e = mkEvent(scala::ET::SYNC_REQ, req);
-    m_sync->sendEvent(calId, scala::eventToJson(e).dump());
+    json m = logos_sync::catchup::buildInitial(m_store->log(calId), m_identity);
+    m_sync->sendEvent(calId, scala::eventToJson(mkEvent(scala::ET::SYNC_REQ, m)).dump());
 }
 
 // ── context lifecycle ────────────────────────────────────────────────────────
