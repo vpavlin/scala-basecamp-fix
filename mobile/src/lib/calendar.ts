@@ -10,6 +10,7 @@ import { store, Calendar, CalEvent } from "./store";
 import { Event, ET, Clock, eventToJson, eventFromJson } from "./engine";
 import { utf8Bytes, utf8Decode } from "./utf8";
 import * as sync from "./scala-sync";
+import { buildInitial, respond } from "./catchup";
 
 // ── device identity (SDS senderId + event author) ───────────────────────────
 // A stable per-install id, used to attribute our writes (event.dev / hlc.dev).
@@ -58,9 +59,12 @@ async function serveLog(calId: string): Promise<void> {
     await sync.sendEvent(calId, JSON.stringify(eventToJson(e))).catch(() => {});
   }
 }
-// Ask peers to re-serve (broadcast a SYNC_REQ on join). Not stored/folded.
+// Kick off catch-up: publish the initial reconciliation message (bounded range
+// fingerprints over what we hold). Fresh calendar → empty-set fingerprint →
+// recurses down to receive everything; slightly behind → only the changed range.
 async function sendSyncReq(calId: string): Promise<void> {
-  const e = await mkEvent(ET.SYNC_REQ, { from: deviceId });
+  const msg = buildInitial(await store.getLog(calId), deviceId);
+  const e = await mkEvent(ET.SYNC_REQ, msg);
   await sync.sendEvent(calId, JSON.stringify(eventToJson(e))).catch(() => {});
 }
 
@@ -110,8 +114,20 @@ sync.setEventHandler((calendarId, eventJson) => {
       const j = JSON.parse(eventJson);
       const e = eventFromJson(j);
       if (!e.id) return;
-      // CATCH-UP: a peer asking for state — re-serve our log, don't store it.
-      if (e.type === ET.SYNC_REQ) { await serveLog(calendarId); return; }
+      // CATCH-UP (logos-sync v2, recursive RBSR): step the reconciliation for one
+      // incoming range statement — serve the id-exact missing events + publish the
+      // fp/ids/need replies (all single-segment). A payload with no `t` is an OLD
+      // peer's bare SYNC_REQ → fall back to a whole-log serve so we still feed it.
+      if (e.type === ET.SYNC_REQ) {
+        const msg: any = e.payload;
+        if (!msg || !msg.t) { await serveLog(calendarId); return; }
+        const step = respond(await store.getLog(calendarId), msg, deviceId);
+        for (const ev of step.serve)
+          await sync.sendEvent(calendarId, JSON.stringify(eventToJson(ev))).catch(() => {});
+        for (const r of step.replies)
+          await sync.sendEvent(calendarId, JSON.stringify(eventToJson(await mkEvent(ET.SYNC_REQ, r)))).catch(() => {});
+        return;
+      }
       (await ensureClock()).receive(e.hlc); // advance past the ingested cause
       const isNew = await store.appendEvent(calendarId, e); // idempotent (dedup by id)
       if (isNew) notifyChange();
