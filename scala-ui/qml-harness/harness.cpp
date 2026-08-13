@@ -37,9 +37,9 @@ QString MockLogos::callModule(const QString &mod, const QString &method, const Q
         fprintf(stderr, "[CALL] %s(%s)\n", qPrintable(method), qPrintable(parts.join(" | ")));
     }
     if (method == "listCalendars")
-        return QString(R"([{"id":"c1","name":"Plain","color":"#a6e3a1","encryptionKey":"k","creatorId":"0xme","owner":"0xme","roles":{},"rolesConfigured":false,"schema":[]},{"id":"c2","name":"Freequencies","color":"#89b4fa","description":"nightlife","encryptionKey":"k","creatorId":"0xowner","owner":"0xowner","roles":{"0xme00000000000000000000000000000000000000":"viewer"},"rolesConfigured":true,"schema":[{"key":"venue","label":"Venue","type":"text"}]}])");
+        return QString(R"([{"id":"c1","name":"Team","color":"#89b4fa","encryptionKey":"k","creatorId":"0xowner","owner":"0xowner","roles":{},"rolesConfigured":false,"open":true,"schema":[]}])");
     if (method == "listEvents")
-        return QString(R"([{"id":"e1","calendarId":"c1","title":"Opening night","startTime":%1,"endTime":%2,"fields":{"venue":"Club X","vip":true,"status":"confirmed"}}])")
+        return QString(R"([{"id":"e1","calendarId":"c1","title":"Their event","startTime":%1,"endTime":%2,"creatorId":"0xowner"}])")
             .arg(EV_START).arg(EV_END);
     if (method == "createCalendar") return "\"cNEW\""; // JSON-encoded id (like the real core) — must be j()-unwrapped
     if (method == "getIdentity") return "0xme00000000000000000000000000000000000000";
@@ -86,12 +86,11 @@ int main(int argc, char **argv) {
     // Let the 3s poll + first frame settle, then screenshot each surface in turn.
     QTimer::singleShot(1200, [&] { grab(&view, out + "/01-main.png"); });
     // New-calendar dialog now has the custom-fields editor (matches settings).
-    QTimer::singleShot(1600, [&] { runJs(&view, "openNewEvent()"); });
-    QTimer::singleShot(2000, [&] { runJs(&view, "datePicker.openFor(evDate, evDate.text)"); });
-    QTimer::singleShot(2400, [&] { grab(&view, out + "/01-datepicker.png"); runJs(&view, "datePicker.close()"); });
-    QTimer::singleShot(2700, [&] { runJs(&view, "timePicker.openFor(evStart, evStart.text)"); });
-    QTimer::singleShot(3100, [&] { grab(&view, out + "/02-timepicker.png"); });
-    QTimer::singleShot(3400, [&] { app.quit(); });
+    QTimer::singleShot(1600, [&] { runJs(&view, "openEditEvent(events[0])"); });
+    QTimer::singleShot(2000, [&] { grab(&view, out + "/01-edit-others.png"); runJs(&view, "eventPopup.close()"); });
+    QTimer::singleShot(2400, [&] { runJs(&view, "openNewEvent()"); });
+    QTimer::singleShot(2800, [&] { grab(&view, out + "/02-new-own.png"); });
+    QTimer::singleShot(3200, [&] { app.quit(); });
     return app.exec();
 }
 #include "harness.moc"

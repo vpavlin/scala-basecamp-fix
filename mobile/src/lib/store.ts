@@ -19,9 +19,10 @@ export interface Calendar {
   // From the fold (all optional; a plain calendar leaves schema empty / rolesConfigured false):
   description?: string;
   schema?: any[]; // custom-field definitions [{key,label,type,options?}]
-  owner?: string; // device id of the creator
-  roles?: Record<string, string>; // deviceId -> "admin"|"viewer"
+  owner?: string; // address of the creator
+  roles?: Record<string, string>; // address -> "editor"|"viewer"
   rolesConfigured?: boolean;
+  open?: boolean; // may participants add events? (default true)
 }
 
 export interface CalEvent {
@@ -142,6 +143,7 @@ export const store = {
         owner: f.owner,
         roles: f.roles,
         rolesConfigured: f.rolesConfigured,
+        open: f.open,
       });
     }
     return out;

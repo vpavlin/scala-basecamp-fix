@@ -58,62 +58,84 @@ inline json foldCalendar(const std::string& calId, const std::vector<Event>& log
     std::map<std::string, json> events;   // event id -> event payload
     std::set<std::string> tombstones;
 
-    // ── roles (#3), opt-in + default-open ────────────────────────────────────
-    // owner = author of the earliest cal.meta (deterministic from the log). Until an
-    // owner/admin publishes the FIRST member.set the calendar is OPEN — anyone with
-    // the key writes (backward-compatible, and keeps "anyone can plan" true). Once
-    // roles are configured, only owner/admins may write; a viewer's writes fold away.
-    // Single HLC-ordered pass, roles built incrementally → order-independent + convergent.
-    std::map<std::string, std::string> roleOf;   // dev -> "admin"|"viewer"
+    // ── roles + permissions (two rules; owner/editor/viewer + Open toggle) ────
+    // owner = author of the earliest cal.meta. roleOf grants "editor"/"viewer". Two rules:
+    //   1. Owner + Editors may do anything; explicit Viewers are read-only.
+    //   2. Everyone else (a "participant" — anyone with the key) may ADD events iff the
+    //      calendar is OPEN, and may EDIT/DELETE only the events THEY authored.
+    // → "editing someone else's event needs to be an Editor" falls out for free, using the
+    // per-event author (creatorId). Authenticity: a privileged (owner/editor) claim is
+    // trusted only when the event is signed by that author; unsigned legacy events are still
+    // admitted (best-effort author). Single HLC-ordered pass → order-independent, convergent.
+    std::map<std::string, std::string> roleOf;    // dev -> "editor"|"viewer"
+    std::map<std::string, std::string> creatorOf; // event id -> ORIGINAL author (edit-your-own)
     bool rolesConfigured = false;
-    // Authenticity: a role-managed calendar trusts an author claim only when the event
-    // is cryptographically signed by that author (verified). An OPEN calendar admits
-    // anyone (and legacy unsigned events) as before — signing gates roles, not writing.
-    auto canWrite = [&](const std::string& dev, bool verified) -> bool {
-        if (!rolesConfigured) return true;                 // open calendar
-        if (!verified) return false;                       // role-managed → author must be authenticated
+    bool openCal = true;                          // cal.meta "open" (LWW): may participants add? default yes
+
+    auto isEditor = [&](const std::string& dev, bool verified) -> bool {
+        if (rolesConfigured && !verified) return false;    // privileged claim must be authenticated
         if (dev == owner) return true;
         auto it = roleOf.find(dev);
-        return it != roleOf.end() && it->second == "admin";
+        return it != roleOf.end() && (it->second == "editor" || it->second == "admin");
+    };
+    auto isViewer = [&](const std::string& dev) -> bool {
+        auto it = roleOf.find(dev);
+        return it != roleOf.end() && it->second == "viewer";
+    };
+    auto canAdd = [&](const std::string& dev, bool verified) -> bool {
+        if (isEditor(dev, verified)) return true;
+        if (isViewer(dev)) return false;
+        return openCal;                                    // participant may add iff Open
+    };
+    auto canEditExisting = [&](const std::string& dev, const std::string& creator, bool verified) -> bool {
+        if (isEditor(dev, verified)) return true;
+        if (isViewer(dev)) return false;
+        return !creator.empty() && dev == creator;         // else edit only your OWN
     };
 
     for (const auto& e : ordered) {
         // A present-but-invalid signature means the event was forged/tampered → drop it
-        // entirely. An UNSIGNED (legacy) event is admitted but never counts as an
-        // authenticated author (so it can't manage roles or write to a role-managed cal).
+        // entirely. An UNSIGNED (legacy) event is admitted but never counts as authenticated.
         const bool signed_ = isSigned(e);
         const bool verified = signed_ && verifyEvent(e);
         if (signed_ && !verified) continue;
         const std::string& author = e.dev;
         if (e.type == ET::CAL_META) {
-            if (owner.empty()) owner = author;             // creator = first cal.meta author
-            if (!canWrite(author, verified)) continue;     // only admins edit meta once role-managed
+            bool creating = owner.empty();
+            if (creating) owner = author;                  // creator = first cal.meta author
+            if (!creating && !isEditor(author, verified)) continue;  // only owner/editors change settings
             if (e.payload.contains("name"))        name        = e.payload.value("name", name);
             if (e.payload.contains("color"))       color       = e.payload.value("color", color);
             if (e.payload.contains("description")) description = e.payload.value("description", description);
             if (e.payload.contains("schema") && e.payload["schema"].is_array()) schema = e.payload["schema"];
+            if (e.payload.contains("open"))        openCal     = e.payload.value("open", true);
         } else if (e.type == ET::MEMBER_SET) {
-            // A role grant is admitted only if its author is an AUTHENTICATED owner/admin —
-            // an unsigned or forged member.set can never confer or revoke a role.
-            if (owner.empty() || !verified || !(author == owner || (roleOf.count(author) && roleOf[author] == "admin"))) continue;
+            // A role grant is admitted only from an AUTHENTICATED owner/editor.
+            bool authed = verified && (author == owner || (roleOf.count(author) && (roleOf[author] == "editor" || roleOf[author] == "admin")));
+            if (owner.empty() || !authed) continue;
             std::string m = e.payload.value("member", std::string());
             std::string r = e.payload.value("role", std::string());
             if (m.empty() || m == owner) continue;         // owner role is fixed
             rolesConfigured = true;
             if (r == "remove") roleOf.erase(m);
-            else if (r == "admin" || r == "viewer") roleOf[m] = r;
+            else if (r == "editor" || r == "admin") roleOf[m] = "editor";  // "admin" = legacy alias
+            else if (r == "viewer") roleOf[m] = "viewer";
         } else if (e.type == ET::EVENT_PUT) {
-            if (!canWrite(author, verified)) continue;     // viewer/forged edits dropped
             std::string id = e.payload.value("id", std::string());
             if (id.empty() || tombstones.count(id)) continue;   // tombstone terminal
+            bool exists = creatorOf.count(id) > 0;
+            if (!exists) { if (!canAdd(author, verified)) continue; creatorOf[id] = author; }  // create
+            else if (!canEditExisting(author, creatorOf[id], verified)) continue;              // edit
             json ev = e.payload;
             ev["calendarId"] = calId;
-            ev["creatorId"] = e.dev;
+            ev["creatorId"] = creatorOf[id];               // ORIGINAL author (not the last editor)
             events[id] = ev;
         } else if (e.type == ET::EVENT_DEL) {
-            if (!canWrite(author, verified)) continue;
             std::string id = e.payload.value("id", std::string());
-            if (!id.empty()) { tombstones.insert(id); events.erase(id); }
+            if (id.empty()) continue;
+            std::string creator = creatorOf.count(id) ? creatorOf[id] : std::string();
+            if (!canEditExisting(author, creator, verified)) continue;
+            tombstones.insert(id); events.erase(id);
         }
     }
 
@@ -124,7 +146,7 @@ inline json foldCalendar(const std::string& calId, const std::vector<Event>& log
     return json{{"id", calId}, {"name", name}, {"color", color},
                 {"description", description}, {"schema", schema},
                 {"owner", owner}, {"roles", roles}, {"rolesConfigured", rolesConfigured},
-                {"events", evArr}};
+                {"open", openCal}, {"events", evArr}};
 }
 
 } // namespace scala

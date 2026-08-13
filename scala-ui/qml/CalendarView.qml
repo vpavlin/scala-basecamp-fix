@@ -470,17 +470,15 @@ Item {
     // ── event editor popup ─────────────────────────────────────────────────
     property var editingEvent: null       // null = creating
     property string editCalId: ""
-    // Can the current user WRITE to this calendar? Open calendars: anyone. Role-managed:
-    // owner or admin only — a viewer's writes fold away, so we make the editor read-only for
-    // them (no silent-drop). Reactive: re-evaluates when editCalId/calendars/identity change.
-    function canWrite(calId) {
-        var c = calById(calId); if (!c) return true
-        if (!c.rolesConfigured) return true
-        if (c.owner && c.owner === myIdentity) return true
-        var r = c.roles || {}
-        return r[myIdentity] === "admin"
-    }
-    readonly property bool eventReadOnly: !canWrite(editCalId)
+    // Two-rule permissions (mirror the fold): owner/editors do anything; viewers read-only;
+    // everyone else may ADD iff Open, and edit/delete only the events they authored.
+    function isEditorMe(c) { if (!c) return true; if (c.owner === myIdentity) return true; var r = c.roles || {}; return r[myIdentity] === "editor" || r[myIdentity] === "admin" }
+    function isViewerMe(c) { return !!c && (c.roles || {})[myIdentity] === "viewer" }
+    function canAddTo(c) { if (isEditorMe(c)) return true; if (isViewerMe(c)) return false; return !c || c.open !== false }
+    function canEditEvent(c, ev) { if (isEditorMe(c)) return true; if (isViewerMe(c)) return false; return !!ev && ev.creatorId === myIdentity }
+    // Event editor read-only: a NEW event needs add rights; an EXISTING event needs edit
+    // rights on THAT event (yours, or you're an editor). Reactive to editCalId/editingEvent.
+    readonly property bool eventReadOnly: editingEvent ? !canEditEvent(calById(editCalId), editingEvent) : !canAddTo(calById(editCalId))
     // Inline validation — empty string == valid. Bound to the Save button + an error line.
     function eventError() {
         if (evTitle.text.trim() === "") return "Title is required."
@@ -865,10 +863,15 @@ Item {
                 }
             }
 
-            // View-only notice for viewers (no edit rights on this calendar).
+            // View-only notice — say WHY (viewer / not-your-event / can't-add).
             LogosText {
                 visible: root.eventReadOnly
-                text: "View only — you don't have edit rights on this calendar."
+                text: {
+                    var c = root.calById(root.editCalId)
+                    if (root.isViewerMe(c)) return "View only — you have read-only access to this calendar."
+                    if (root.editingEvent) return "View only — you can only edit events you created."
+                    return "View only — you can't add events to this calendar."
+                }
                 color: Theme.palette.warning; font.pixelSize: 12; wrapMode: Text.WordWrap; Layout.fillWidth: true
             }
             // Inline validation error (only while editable).
@@ -1137,7 +1140,7 @@ Item {
     // ── per-calendar settings popup (name/description, schema, roles) ──────────
     property string setCalId: ""
     property string setNewType: "text"      // staged field type in the add-row
-    property string setNewRole: "viewer"    // staged role in the add-member row
+    property string setNewRole: "editor"    // staged role in the add-member row
 
     function openCalSettings(cal) {
         setCalId = cal.id
@@ -1152,7 +1155,7 @@ Item {
             })
         }
         setNewKey.text = ""; setNewLabel.text = ""; setNewOptions.text = ""; root.setNewType = "text"
-        setNewMember.text = ""; root.setNewRole = "viewer"
+        setNewMember.text = ""; root.setNewRole = "editor"
         root.setSaveError = ""
         calSettingsPopup.open()
     }
@@ -1212,7 +1215,7 @@ Item {
         var c = calById(calId); if (!c) return false
         if (c.owner && c.owner === myIdentity) return true
         var r = c.roles || {}
-        return r[myIdentity] === "admin"
+        return r[myIdentity] === "editor" || r[myIdentity] === "admin"
     }
     function addMember() {
         var id = setNewMember.text.trim(); if (id === "") return
@@ -1303,14 +1306,29 @@ Item {
 
                     // ── sharing & roles ──
                     LogosText { text: "Sharing & roles"; color: Theme.palette.text; font.pixelSize: 14; font.weight: Theme.typography.weightMedium }
+                    // Open toggle: may anyone with the invite ADD events? Everyone can still edit
+                    // only the events they created; editors edit anyone's. Owner/editor only.
+                    RowLayout {
+                        visible: root.canManage(root.setCalId)
+                        Layout.fillWidth: true; spacing: Theme.spacing.small
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            LogosText { text: "Open — anyone can add events"; color: Theme.palette.text; font.pixelSize: 13 }
+                            LogosText { text: "Off = only editors can add. Everyone edits only events they created; editors edit anyone's."; color: Theme.palette.textTertiary; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                        }
+                        Switch {
+                            checked: { var c = root.calById(root.setCalId); return !c || c.open !== false }
+                            onToggled: { root.core("updateCalendarMeta", [root.setCalId, JSON.stringify({ open: checked })]); root.refresh() }
+                        }
+                    }
                     LogosText {
-                        text: "Add someone by their identity (they'll find it in Diagnostics ⚙ → This device id)."
+                        text: "Add someone by their identity (they'll find it in Diagnostics ⚙ → This device id). Editors can edit any event; viewers are read-only."
                         color: Theme.palette.textTertiary; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true
                     }
 
                     LogosText {
                         visible: { var c = root.calById(root.setCalId); return !!c && c.rolesConfigured === false }
-                        text: "This calendar is currently open — anyone with the invite can edit. Adding a member makes it role-managed."
+                        text: "No members yet — anyone with the invite can add events (and edit their own). Add an editor to let someone edit everyone's; add a viewer for read-only."
                         color: Theme.palette.warning; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true
                     }
 
@@ -1339,7 +1357,7 @@ Item {
                         RowLayout {
                             Layout.fillWidth: true; spacing: 6
                             Repeater {
-                                model: ["admin", "viewer"]
+                                model: ["editor", "viewer"]
                                 delegate: Rectangle {
                                     height: 26; radius: 13; width: rLbl.width + 18
                                     color: root.setNewRole === modelData ? Theme.palette.backgroundSecondary : Theme.palette.background

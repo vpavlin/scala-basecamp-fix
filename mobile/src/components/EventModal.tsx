@@ -288,7 +288,9 @@ export function EventModal({
             )}
 
             {!canEdit && (
-              <Text style={{ color: "#f9e2af", fontSize: 12, marginTop: 14 }}>View only — you don't have edit rights on this calendar.</Text>
+              <Text style={{ color: "#f9e2af", fontSize: 12, marginTop: 14 }}>
+                {initial.id ? "View only — you can only edit events you created (editors can edit any)." : "View only — you can't add events to this calendar."}
+              </Text>
             )}
             {canEdit && (
               <Pressable style={[s.btn, { backgroundColor: C.accent }]} onPress={save}>

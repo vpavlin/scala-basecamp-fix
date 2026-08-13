@@ -57,7 +57,7 @@ export default function App() {
   const [aliasMap, setAliasMap] = useState<Record<string, string>>({}); // #7: device-local name overrides
   const [calSet, setCalSet] = useState<{ cal: Calendar; name: string; desc: string; alias: string; schema: FieldDef[] } | null>(null); // #7 settings sheet
   const [nf, setNf] = useState<{ key: string; label: string; type: string }>({ key: "", label: "", type: "text" }); // #8 new custom field
-  const [nm, setNm] = useState<{ id: string; role: "admin" | "viewer" }>({ id: "", role: "admin" }); // #3 new member
+  const [nm, setNm] = useState<{ id: string; role: "editor" | "viewer" }>({ id: "", role: "editor" }); // #3 new member
   const [invite, setInvite] = useState("");
   const [lastInvite, setLastInvite] = useState("");
   const [qr, setQr] = useState<{ value: string; title: string } | null>(null);
@@ -105,8 +105,14 @@ export default function App() {
     if (c.owner && c.owner === me) return "owner";
     return c.roles?.[me] || "viewer";
   }, [me]);
+  // Two-rule permissions (mirror the fold): owner/editors do anything; viewers read-only;
+  // everyone else may ADD iff Open, and edit/delete only events they authored.
+  const isEditorMe = useCallback((c?: Calendar) => !c ? true : (c.owner === me || c.roles?.[me] === "editor" || c.roles?.[me] === "admin"), [me]);
+  const isViewerMe = useCallback((c?: Calendar) => c?.roles?.[me] === "viewer", [me]);
+  const canAddTo = useCallback((c?: Calendar) => isEditorMe(c) || (!isViewerMe(c) && c?.open !== false), [isEditorMe, isViewerMe]);
+  const canEditEvent = useCallback((c?: Calendar, ev?: CalEvent) => isEditorMe(c) || (!isViewerMe(c) && !!ev && ev.creatorId === me), [isEditorMe, isViewerMe, me]);
   const openCalSettings = (c: Calendar) => {
-    setNf({ key: "", label: "", type: "text" }); setNm({ id: "", role: "admin" });
+    setNf({ key: "", label: "", type: "text" }); setNm({ id: "", role: "editor" });
     setCalSet({ cal: c, name: c.name, desc: c.description || "", alias: aliasMap[c.id] || "", schema: c.schema ? [...c.schema] : [] });
   };
   const saveCalSettings = async () => {
@@ -127,7 +133,7 @@ export default function App() {
   };
   const removeField = (key: string) => setCalSet((v) => v && { ...v, schema: v.schema.filter((f) => f.key !== key) });
   // #3: role management — writes a member.set event immediately (owner/admin only; the fold enforces it).
-  const canManage = !!calSet && (calSet.cal.owner === me || calSet.cal.roles?.[me] === "admin");
+  const canManage = !!calSet && (calSet.cal.owner === me || calSet.cal.roles?.[me] === "editor" || calSet.cal.roles?.[me] === "admin");
   const members: [string, string][] = calSet
     ? [...(calSet.cal.owner ? [[calSet.cal.owner, "owner"] as [string, string]] : []),
        ...Object.entries(calSet.cal.roles || {}).filter(([id]) => id !== calSet.cal.owner)]
@@ -136,7 +142,7 @@ export default function App() {
     const id = nm.id.trim();
     if (!id || !calSet) return;
     await setMemberRole(calSet.cal.id, id, nm.role);
-    setNm({ id: "", role: "admin" });
+    setNm({ id: "", role: "editor" });
     Alert.alert("Member added", `${id.slice(0, 16)}… is now ${nm.role}. They'll appear once the change syncs.`);
     setCalSet(null);
   };
@@ -402,12 +408,25 @@ export default function App() {
                 </ScrollView>
                 <Pressable style={[s.smBtn, { marginTop: 8, alignItems: "center", backgroundColor: C.surface, borderWidth: 1, borderColor: C.border }]} onPress={addField}><Text style={[s.smBtnT, { color: C.text }]}>+ Add field</Text></Pressable>
 
-                {/* #3: sharing & roles — who can edit. Identity = a device id; share yours to be added. */}
+                {/* #3: sharing & roles — who can edit. Identity = an address; share yours to be added. */}
                 <Text style={s.pLabel}>Sharing &amp; roles</Text>
-                <Text style={[s.sub, { marginBottom: 6 }]}>
-                  {calSet?.cal.rolesConfigured
-                    ? `Role-managed. Your role: ${calSet ? roleOf(calSet.cal) : ""}${roleOf(calSet!.cal) === "viewer" ? " — your shared edits won't apply." : "."}`
-                    : "Open — anyone with the invite link can edit. Add a member below to make it role-managed (owner sets admins; others become viewers)."}
+                {/* Open toggle: may anyone with the invite ADD events? (owner/editors always can;
+                    everyone can only edit their OWN events; editors can edit anyone's). Owner-only. */}
+                {canManage && (
+                  <View style={s.rowBetween}>
+                    <View style={{ flex: 1, paddingRight: 10 }}>
+                      <Text style={{ color: C.text }}>Open — anyone can add events</Text>
+                      <Text style={s.sub}>Off = only editors can add. Everyone can still edit only the events they created; editors edit anyone's.</Text>
+                    </View>
+                    <Switch
+                      value={calSet?.cal.open !== false}
+                      onValueChange={async (v) => { if (calSet) { await updateCalendarMeta(calSet.cal.id, { open: v }); setCalSet((s2) => s2 && { ...s2, cal: { ...s2.cal, open: v } }); } }}
+                      trackColor={{ true: C.primary, false: C.border }} thumbColor="#fff"
+                    />
+                  </View>
+                )}
+                <Text style={[s.sub, { marginBottom: 6, marginTop: 8 }]}>
+                  {`Your role: ${calSet ? roleOf(calSet.cal) : ""}${roleOf(calSet!.cal) === "viewer" ? " — read-only." : "."}`}
                 </Text>
                 {members.map(([id, role]) => (
                   <View key={id} style={s.fieldRow}>
@@ -421,7 +440,7 @@ export default function App() {
                   <>
                     <TextInput style={[s.input, { marginTop: 6 }]} value={nm.id} onChangeText={(t) => setNm((v) => ({ ...v, id: t }))} placeholder="Paste a member's identity" placeholderTextColor={C.sub} autoCapitalize="none" />
                     <View style={[s.row2, { marginTop: 6, alignItems: "center" }]}>
-                      {(["admin", "viewer"] as const).map((r) => (
+                      {(["editor", "viewer"] as const).map((r) => (
                         <Pressable key={r} onPress={() => setNm((v) => ({ ...v, role: r }))} style={[s.typeChip, nm.role === r && s.typeChipOn]}>
                           <Text style={[s.typeChipT, nm.role === r && { color: C.bg }]}>{r}</Text>
                         </Pressable>
@@ -504,7 +523,7 @@ export default function App() {
           calendarId={modal.calId}
           onPickCalendar={(id) => setModal((m) => ({ ...m, calId: id }))}
           canPickCalendar={!modal.editing}
-          canEdit={roleOf(cals.find((c) => c.id === modal.calId) || ({} as Calendar)) !== "viewer"}
+          canEdit={modal.editing ? canEditEvent(cals.find((c) => c.id === modal.calId), modal.editing) : canAddTo(cals.find((c) => c.id === modal.calId))}
           onSave={saveEvent}
           onDelete={modal.editing ? removeEvent : undefined}
           onClose={() => setModal((m) => ({ ...m, open: false }))}

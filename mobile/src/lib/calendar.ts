@@ -208,13 +208,14 @@ export async function deleteCalendar(calId: string): Promise<void> {
 // travel in the event log to every device. Only the changed fields are written.
 export async function updateCalendarMeta(
   calId: string,
-  fields: { name?: string; color?: string; description?: string; schema?: any[] },
+  fields: { name?: string; color?: string; description?: string; schema?: any[]; open?: boolean },
 ): Promise<void> {
   const p: any = {};
   if (fields.name !== undefined) p.name = fields.name.trim();
   if (fields.color !== undefined) p.color = fields.color;
   if (fields.description !== undefined) p.description = fields.description.trim();
   if (fields.schema !== undefined) p.schema = fields.schema;
+  if (fields.open !== undefined) p.open = fields.open;
   if (Object.keys(p).length === 0) return;
   if (p.name !== undefined || p.color !== undefined) {
     const reg = (await store.getRegistry()).find((r) => r.id === calId);
@@ -246,7 +247,7 @@ export async function getEventHistory(
 
 // Roles (#3): grant/revoke a member by their device id (owner/admin only — the fold
 // enforces it). role "remove" clears the grant. Writes a member.set event.
-export async function setMemberRole(calId: string, member: string, role: "admin" | "viewer" | "remove"): Promise<void> {
+export async function setMemberRole(calId: string, member: string, role: "editor" | "admin" | "viewer" | "remove"): Promise<void> {
   await publishAndApply(calId, await mkEvent(ET.MEMBER_SET, { member, role }));
   notifyChange();
 }

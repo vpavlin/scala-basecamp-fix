@@ -93,6 +93,7 @@ export interface FoldedCalendar {
   owner: string;
   roles: Record<string, string>;
   rolesConfigured: boolean;
+  open: boolean;
   events: any[];
 }
 
@@ -110,57 +111,73 @@ export function foldCalendar(calId: string, log: Event[]): FoldedCalendar {
   const events = new Map<string, any>(); // event id -> payload
   const tombstones = new Set<string>();
 
-  // Roles (#3), opt-in + default-open — parity with scala_engine.hpp. owner = author of
-  // the earliest cal.meta; until the first member.set the calendar is OPEN (anyone with
-  // the key writes). Once configured, only owner/admins write. Single HLC-ordered pass.
-  const roleOf = new Map<string, string>(); // dev -> "admin"|"viewer"
+  // Roles + permissions (two rules) — parity with scala_engine.hpp. owner/editor/viewer +
+  // an Open toggle: (1) owner/editors do anything, viewers read-only; (2) everyone else may
+  // ADD iff Open, and EDIT/DELETE only the events THEY authored. Single HLC-ordered pass.
+  const roleOf = new Map<string, string>(); // dev -> "editor"|"viewer"
+  const creatorOf = new Map<string, string>(); // event id -> ORIGINAL author (edit-your-own)
   let rolesConfigured = false;
-  // Authenticity gate — parity with scala_engine.hpp. A role-managed calendar trusts an
-  // author claim only when the event is signed by that author (verified); an OPEN calendar
-  // admits anyone (and legacy unsigned events). Signing gates roles, not writing.
-  const canWrite = (dev: string, verified: boolean): boolean => {
-    if (!rolesConfigured) return true;
-    if (!verified) return false;
-    return dev === owner || roleOf.get(dev) === "admin";
+  let openCal = true; // cal.meta "open" (LWW): may participants add? default yes
+  const isEditor = (dev: string, verified: boolean): boolean => {
+    if (rolesConfigured && !verified) return false; // privileged claim must be authenticated
+    if (dev === owner) return true;
+    const r = roleOf.get(dev);
+    return r === "editor" || r === "admin";
+  };
+  const isViewer = (dev: string): boolean => roleOf.get(dev) === "viewer";
+  const canAdd = (dev: string, verified: boolean): boolean => {
+    if (isEditor(dev, verified)) return true;
+    if (isViewer(dev)) return false;
+    return openCal;
+  };
+  const canEditExisting = (dev: string, creator: string, verified: boolean): boolean => {
+    if (isEditor(dev, verified)) return true;
+    if (isViewer(dev)) return false;
+    return !!creator && dev === creator;
   };
 
   for (const e of ordered) {
     // A present-but-invalid signature = forgery/tampering → drop. Unsigned (legacy) events
-    // are admitted but never count as an authenticated author.
+    // are admitted but never count as authenticated.
     const signed = isSigned(e);
     const verified = signed && verifyEvent(e);
     if (signed && !verified) continue;
     const author = e.dev;
     if (e.type === ET.CAL_META) {
-      if (!owner) owner = author; // creator = first cal.meta author
-      if (!canWrite(author, verified)) continue;
+      const creating = !owner;
+      if (creating) owner = author; // creator = first cal.meta author
+      if (!creating && !isEditor(author, verified)) continue; // only owner/editors change settings
       const p: any = e.payload;
       if (Object.prototype.hasOwnProperty.call(p, "name")) name = p.name ?? name;
       if (Object.prototype.hasOwnProperty.call(p, "color")) color = p.color ?? color;
       if (Object.prototype.hasOwnProperty.call(p, "description")) description = p.description ?? description;
       if (Array.isArray(p.schema)) schema = p.schema;
+      if (Object.prototype.hasOwnProperty.call(p, "open")) openCal = p.open !== false;
     } else if (e.type === ET.MEMBER_SET) {
-      // A role grant is admitted only from an AUTHENTICATED owner/admin.
-      if (!owner || !verified || !(author === owner || roleOf.get(author) === "admin")) continue;
+      // A role grant is admitted only from an AUTHENTICATED owner/editor.
+      const authed = verified && (author === owner || roleOf.get(author) === "editor" || roleOf.get(author) === "admin");
+      if (!owner || !authed) continue;
       const m: string = (e.payload as any)?.member ?? "";
       const r: string = (e.payload as any)?.role ?? "";
       if (!m || m === owner) continue; // owner role is fixed
       rolesConfigured = true;
       if (r === "remove") roleOf.delete(m);
-      else if (r === "admin" || r === "viewer") roleOf.set(m, r);
+      else if (r === "editor" || r === "admin") roleOf.set(m, "editor"); // "admin" = legacy alias
+      else if (r === "viewer") roleOf.set(m, "viewer");
     } else if (e.type === ET.EVENT_PUT) {
-      if (!canWrite(author, verified)) continue; // viewer/forged edits dropped
       const id: string = e.payload?.id ?? "";
       if (!id || tombstones.has(id)) continue; // tombstone terminal
-      const ev = { ...e.payload, calendarId: calId, creatorId: e.dev };
+      const exists = creatorOf.has(id);
+      if (!exists) { if (!canAdd(author, verified)) continue; creatorOf.set(id, author); } // create
+      else if (!canEditExisting(author, creatorOf.get(id)!, verified)) continue; // edit
+      const ev = { ...e.payload, calendarId: calId, creatorId: creatorOf.get(id) }; // ORIGINAL author
       events.set(id, ev);
     } else if (e.type === ET.EVENT_DEL) {
-      if (!canWrite(author, verified)) continue;
       const id: string = e.payload?.id ?? "";
-      if (id) {
-        tombstones.add(id);
-        events.delete(id);
-      }
+      if (!id) continue;
+      if (!canEditExisting(author, creatorOf.get(id) ?? "", verified)) continue;
+      tombstones.add(id);
+      events.delete(id);
     }
   }
 
@@ -168,7 +185,7 @@ export function foldCalendar(calId: string, log: Event[]): FoldedCalendar {
   const ids = [...events.keys()].sort();
   const roles: Record<string, string> = {};
   [...roleOf.keys()].sort().forEach((k) => (roles[k] = roleOf.get(k)!));
-  return { id: calId, name, color, description, schema, owner, roles, rolesConfigured, events: ids.map((id) => events.get(id)) };
+  return { id: calId, name, color, description, schema, owner, roles, rolesConfigured, open: openCal, events: ids.map((id) => events.get(id)) };
 }
 
 // ── Clock: stamps local events, advances past ingested causes ────────────────

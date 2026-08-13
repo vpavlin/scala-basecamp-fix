@@ -34,6 +34,24 @@ drops them. Fine for honest viewers.
   real defence against a *malicious* keyholder; deferred until needed (a later crypto layer,
   not a fold change).
 
+## Revision — two-rule model (owner/editor/viewer + Open toggle + edit-your-own)
+
+The original "only owner/admins may write once role-managed" was too coarse and confused
+users ("why can I edit a calendar someone else made?"). Superseded by **two rules**, still
+folded deterministically and now backed by signing (ADR 0007) so authorship is unforgeable:
+
+1. **Owner + Editors** may do anything; explicit **Viewers** are read-only.
+2. **Everyone else** (a *participant* — anyone with the key) may **add** events iff the
+   calendar is **Open** (a per-calendar `cal.meta.open` toggle, default true), and may
+   **edit/delete only the events they authored** (`creatorId`, the first author of that id).
+
+So "editing someone else's event needs to be an Editor" falls out for free — no per-event
+ACLs (considered and rejected as too flexible). `roles` now grants `editor`/`viewer`
+(`admin` kept as a legacy alias in the fold). The fold returns `open`, and `creatorId` is
+the ORIGINAL author. Verified by a permission test (edit-own-only, can't-delete-others,
+restricted-blocks-add, viewer-blocked, editor-edits-any) and by the UI (event editor is
+read-only per event; an Open/Restricted toggle in settings).
+
 ## Consequences
 
 - `foldCalendar` returns `owner` / `roles` / `rolesConfigured` for the UI. Enforcement is
