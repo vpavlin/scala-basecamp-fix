@@ -911,6 +911,7 @@ Item {
         }
         setNewKey.text = ""; setNewLabel.text = ""; setNewOptions.text = ""; root.setNewType = "text"
         setNewMember.text = ""; root.setNewRole = "viewer"
+        root.setSaveError = ""
         calSettingsPopup.open()
     }
     function addSchemaField() {
@@ -927,7 +928,9 @@ Item {
         })
         setNewKey.text = ""; setNewLabel.text = ""; setNewOptions.text = ""; root.setNewType = "text"
     }
+    property string setSaveError: ""
     function saveCalSettings() {
+        root.setSaveError = ""
         var sch = []
         for (var i = 0; i < setSchemaModel.count; i++) {
             var it = setSchemaModel.get(i)
@@ -936,8 +939,23 @@ Item {
             if (it.ftype === "enum") e.options = o
             sch.push(e)
         }
+        var wantKeys = []
+        for (var k = 0; k < sch.length; k++) wantKeys.push(sch[k].key)
+        wantKeys.sort()
         core("updateCalendarMeta", [setCalId, JSON.stringify({ name: setName.text.trim(), description: setDesc.text.trim(), schema: sch })])
-        calSettingsPopup.close(); refresh()
+        refresh()
+        // VERIFY the core actually persisted it. An out-of-date core silently no-ops
+        // updateCalendarMeta (added in scala 0.7.0), so a save would appear to succeed but
+        // vanish — surface that instead of failing quietly.
+        var now = root.calById(setCalId)
+        var gotKeys = []
+        if (now && now.schema) for (var g = 0; g < now.schema.length; g++) gotKeys.push(now.schema[g].key)
+        gotKeys.sort()
+        if (JSON.stringify(gotKeys) !== JSON.stringify(wantKeys)) {
+            root.setSaveError = "Couldn't save — your Scala core module looks out of date. Update 'scala' to 0.8.0 in the package manager (custom fields need core 0.7.0+), then try again."
+            return // keep the popup open so the message is seen
+        }
+        calSettingsPopup.close()
     }
     // Members = owner (not removable) + each roles entry.
     function membersFor(calId) {
@@ -1097,6 +1115,12 @@ Item {
 
             ListModel { id: setSchemaModel }
 
+            LogosText {
+                visible: root.setSaveError !== ""
+                text: root.setSaveError
+                color: Theme.palette.warning; font.pixelSize: 12; wrapMode: Text.WordWrap
+                Layout.fillWidth: true; Layout.topMargin: Theme.spacing.small
+            }
             RowLayout {
                 Layout.fillWidth: true; Layout.topMargin: Theme.spacing.small; spacing: Theme.spacing.small
                 Item { Layout.fillWidth: true }

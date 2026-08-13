@@ -28,7 +28,14 @@ public:
 };
 
 QString MockLogos::callModule(const QString &mod, const QString &method, const QVariant &args) {
-    Q_UNUSED(mod); Q_UNUSED(args);
+    Q_UNUSED(mod);
+    // Log every WRITE call with its args, so we can see exactly what the view sends the core.
+    if (method != "listCalendars" && method != "listEvents" && method != "getIdentity" && method != "diagnostics") {
+        const QVariantList a = args.toList();
+        QStringList parts;
+        for (const auto &v : a) parts << v.toString();
+        fprintf(stderr, "[CALL] %s(%s)\n", qPrintable(method), qPrintable(parts.join(" | ")));
+    }
     if (method == "listCalendars")
         return QString(R"([{"id":"c1","name":"Freequencies","color":"#89b4fa","description":"Lisbon nightlife planner","encryptionKey":"k","creatorId":"0xme","owner":"0xme","roles":{},"rolesConfigured":false,"schema":[{"key":"venue","label":"Venue","type":"text"},{"key":"lineup","label":"Lineup","type":"longtext"},{"key":"vip","label":"VIP","type":"bool"},{"key":"status","label":"Status","type":"enum","options":["confirmed","tentative"]}]}])");
     if (method == "listEvents")
@@ -77,13 +84,17 @@ int main(int argc, char **argv) {
 
     // Let the 3s poll + first frame settle, then screenshot each surface in turn.
     QTimer::singleShot(1200, [&] { grab(&view, out + "/01-main.png"); });
-    QTimer::singleShot(1600, [&] { runJs(&view, "newCalPopup.open()"); });
-    QTimer::singleShot(2100, [&] { grab(&view, out + "/02-newcal.png"); runJs(&view, "newCalPopup.close()"); });
-    QTimer::singleShot(2500, [&] { runJs(&view, "openCalSettings(calendars[0])"); });
-    QTimer::singleShot(3000, [&] { grab(&view, out + "/03-calsettings.png"); runJs(&view, "calSettingsPopup.close()"); });
-    QTimer::singleShot(3400, [&] { runJs(&view, "openNewEvent()"); });
-    QTimer::singleShot(3900, [&] { grab(&view, out + "/04-newevent.png"); });
-    QTimer::singleShot(4300, [&] { app.quit(); });
+    // Reproduce "add a custom field + Save" and watch what the view sends the core.
+    QTimer::singleShot(1600, [&] { runJs(&view, "openCalSettings(calendars[0])"); });
+    QTimer::singleShot(2000, [&] {
+        runJs(&view, "setNewKey.text='dj'"); runJs(&view, "setNewLabel.text='DJ'");
+        runJs(&view, "root.setNewType='text'");
+    });
+    QTimer::singleShot(2300, [&] { fprintf(stderr, "--- clicking +Add field ---\n"); runJs(&view, "addSchemaField()"); });
+    QTimer::singleShot(2600, [&] { grab(&view, out + "/02-after-addfield.png"); });
+    QTimer::singleShot(2800, [&] { fprintf(stderr, "--- clicking Save (mock no-ops updateCalendarMeta = stale-core sim) ---\n"); runJs(&view, "saveCalSettings()"); });
+    QTimer::singleShot(3100, [&] { grab(&view, out + "/03-save-error.png"); });
+    QTimer::singleShot(3500, [&] { app.quit(); });
     return app.exec();
 }
 #include "harness.moc"
