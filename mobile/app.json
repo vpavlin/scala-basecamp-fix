@@ -3,14 +3,14 @@
     "name": "Scala",
     "slug": "scala",
     "scheme": "scala",
-    "version": "0.8.1",
+    "version": "0.9.0",
     "platforms": [
       "android"
     ],
     "icon": "./assets/icon.png",
     "android": {
       "package": "xyz.vpavlin.scala",
-      "versionCode": 20
+      "versionCode": 21
     },
     "plugins": [
       "./plugins/withLogosDelivery",
@@ -19,7 +19,8 @@
       "expo-camera",
       "./src/lib/logos-transport-pkg/plugins/withDeliveryClient.js",
       "@react-native-community/datetimepicker",
-      "expo-notifications"
+      "expo-notifications",
+      "./src/lib/logos-transport-pkg/plugins/withLoamMesh"
     ],
     "extra": {
       "comment": "versionCode here is source of truth; assert it matches android/app/build.gradle after prebuild."

@@ -130,3 +130,15 @@ export function stopSync(): Promise<void> {
   routes = [];
   return transport.stop();
 }
+
+// ── BLE offline mesh (ADR 0012) — opt-in second bearer for no-internet rooms ──
+import { LoamMeshRadio } from "./logos-transport-pkg/native/blemesh/loam-mesh-radio";
+let meshRadio: LoamMeshRadio | null = null;
+export function meshAvailable(): boolean { return LoamMeshRadio.available(); }
+export async function setMesh(on: boolean): Promise<void> {
+  if (on) { meshRadio = new LoamMeshRadio(); await transport.enableMesh(meshRadio); }
+  else { await transport.disableMesh(); meshRadio = null; }
+}
+export function meshInfo(): { on: boolean; peers: number } {
+  return { on: transport.meshEnabled(), peers: transport.meshPeers() };
+}
