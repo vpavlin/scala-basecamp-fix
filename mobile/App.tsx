@@ -259,6 +259,15 @@ export default function App() {
                 <Switch value={shared} onValueChange={toggleShared} trackColor={{ true: C.primary, false: C.border }} thumbColor="#fff" />
               </View>
 
+              {/* Device identity — a device-wide property (not per-calendar). Share it so an
+                  owner can grant you a role on a calendar. */}
+              <Text style={s.pLabel}>Your identity</Text>
+              <View style={[s.fieldRow, { backgroundColor: C.surface, borderRadius: 8, borderWidth: 1, borderColor: C.border, paddingHorizontal: 10 }]}>
+                <Text style={{ color: C.text, flex: 1, fontFamily: "monospace", fontSize: 12 }} numberOfLines={1}>{me}</Text>
+                <Pressable onPress={copyIdentity} hitSlop={8}><Text style={{ color: C.primary, fontWeight: "700" }}>Copy</Text></Pressable>
+              </View>
+              <Text style={s.sub}>Share this so someone can add you to their calendar.</Text>
+
               <Text style={s.pLabel}>Your calendars</Text>
               {cals.length === 0 && <Text style={s.sub}>None yet.</Text>}
               {cals.map((c) => (
@@ -356,13 +365,6 @@ export default function App() {
                     ? `Role-managed. Your role: ${calSet ? roleOf(calSet.cal) : ""}${roleOf(calSet!.cal) === "viewer" ? " — your shared edits won't apply." : "."}`
                     : "Open — anyone with the invite link can edit. Add a member below to make it role-managed (owner sets admins; others become viewers)."}
                 </Text>
-                <View style={[s.fieldRow, { backgroundColor: C.bg, borderRadius: 8, borderWidth: 1, borderColor: C.border, paddingHorizontal: 10 }]}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ color: C.sub, fontSize: 11 }}>Your identity (share this to be added)</Text>
-                    <Text style={{ color: C.text, fontFamily: "monospace", fontSize: 12 }} numberOfLines={1}>{me}</Text>
-                  </View>
-                  <Pressable onPress={copyIdentity} hitSlop={8}><Text style={{ color: C.primary, fontWeight: "700" }}>Copy</Text></Pressable>
-                </View>
                 {members.map(([id, role]) => (
                   <View key={id} style={s.fieldRow}>
                     <Text style={{ color: C.text, flex: 1, fontFamily: "monospace", fontSize: 12 }} numberOfLines={1}>
