@@ -16,6 +16,7 @@ import { FieldDef } from "./src/components/EventModal";
 
 const FIELD_TYPES = ["text", "longtext", "number", "date", "datetime", "bool", "url", "enum", "color"];
 import { deliveryAvailable, getDebug, refreshDebug } from "./src/lib/scala-sync";
+import { ensureNotifyPermission, scheduleReminders } from "./src/lib/notify";
 import { MonthGrid } from "./src/components/MonthGrid";
 import { EventModal, EventDraft } from "./src/components/EventModal";
 import { Drawer } from "./src/components/Drawer";
@@ -72,7 +73,9 @@ export default function App() {
   const refresh = useCallback(async () => {
     const cs = await store.listCalendars();
     setCals(cs);
-    setEvents((await store.listEvents()).filter((e) => !e.deleted));
+    const evs = (await store.listEvents()).filter((e) => !e.deleted);
+    setEvents(evs);
+    scheduleReminders(evs); // #1: keep local event reminders in step with the data
     const am: Record<string, string> = {};
     for (const c of cs) { const a = await getAlias(c.id); if (a) am[c.id] = a; }
     setAliasMap(am);
@@ -80,6 +83,7 @@ export default function App() {
 
   useEffect(() => {
     refresh();
+    ensureNotifyPermission(); // #1: ask once so reminders can be scheduled
     const off = onChange(refresh);
     (async () => {
       setShared(await getSharedNode());
