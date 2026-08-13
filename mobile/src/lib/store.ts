@@ -32,6 +32,10 @@ export interface CalEvent {
   endTime: number; // ms epoch
   description?: string;
   location?: string;
+  url?: string;                 // meeting / event link
+  allDay?: boolean;             // all-day span (time pickers hidden)
+  reminderMin?: number;         // reminder lead in minutes (undefined = default 10; 0 = none)
+  recur?: import("./recur").Recur; // recurrence rule (undefined = does not repeat)
   fields?: Record<string, any>; // #8: custom schema field values
   creatorId?: string;
   deleted?: boolean; // never set by the fold (tombstoned events are dropped)

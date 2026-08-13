@@ -9,8 +9,10 @@
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 import { CalEvent } from "./store";
+import { expandEvents } from "./recur";
 
-const LEAD_MS = 10 * 60 * 1000; // remind 10 minutes before start
+const HORIZON_MS = 45 * 24 * 60 * 60 * 1000; // schedule occurrences up to 45 days out
+const MAX_SCHEDULED = 400;                   // stay well under the OS limit
 const CHANNEL = "events";
 
 // Foreground presentation (newer expo-notifications uses banner/list, not the old alert).
@@ -59,13 +61,18 @@ async function reconcile(events: CalEvent[]): Promise<void> {
   const now = Date.now();
   const fmt = (ms: number) =>
     new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-  for (const e of events) {
-    if (!e.startTime || e.startTime <= now || e.deleted) continue;
-    const fireAt = Math.max(e.startTime - LEAD_MS, now + 5000);
+  // Expand recurrence into concrete occurrences within the horizon, so a repeating
+  // event fires a reminder for each upcoming instance (not just the master's start).
+  const occ = expandEvents(events, now, now + HORIZON_MS).slice(0, MAX_SCHEDULED);
+  for (const e of occ) {
+    if (!e.startTime || e.startTime <= now) continue;
+    const lead = (e.reminderMin ?? 10); // undefined → default 10 min
+    if (lead <= 0) continue;            // 0 = no reminder
+    const fireAt = e.startTime - lead * 60_000;
     if (fireAt <= now) continue;
     try {
       await Notifications.scheduleNotificationAsync({
-        content: { title: e.title || "Event", body: `Starts at ${fmt(e.startTime)}` },
+        content: { title: e.title || "Event", body: e.allDay ? "Today" : `Starts at ${fmt(e.startTime)}` },
         trigger: {
           type: Notifications.SchedulableTriggerInputTypes.DATE,
           date: new Date(fireAt),
@@ -73,7 +80,7 @@ async function reconcile(events: CalEvent[]): Promise<void> {
         },
       });
     } catch {
-      /* skip a single bad event */
+      /* skip a single bad occurrence */
     }
   }
 }

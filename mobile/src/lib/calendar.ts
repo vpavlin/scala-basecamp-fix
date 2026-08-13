@@ -148,6 +148,10 @@ function putPayload(id: string, f: any): any {
   if (f.endTime !== undefined) p.endTime = f.endTime;
   if (f.description !== undefined) p.description = f.description;
   if (f.location !== undefined) p.location = f.location;
+  if (f.url !== undefined) p.url = f.url;
+  if (f.allDay !== undefined) p.allDay = f.allDay;
+  if (f.reminderMin !== undefined) p.reminderMin = f.reminderMin;
+  if (f.recur !== undefined) p.recur = f.recur; // recurrence rule (fold passes it through)
   // Custom schema fields (#8) travel under `fields`; the fold passes them through.
   if (f.fields !== undefined) p.fields = f.fields;
   return p;

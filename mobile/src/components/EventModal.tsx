@@ -6,6 +6,16 @@ import {
 } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { CalEvent } from "../lib/store";
+import { Recur, Freq, recurLabel } from "../lib/recur";
+
+const FREQS: { key: Freq | "none"; label: string }[] = [
+  { key: "none", label: "Once" }, { key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" },
+  { key: "monthly", label: "Monthly" }, { key: "yearly", label: "Yearly" },
+];
+const REMINDERS: { min: number; label: string }[] = [
+  { min: 0, label: "None" }, { min: 10, label: "10 min" }, { min: 30, label: "30 min" },
+  { min: 60, label: "1 hr" }, { min: 1440, label: "1 day" },
+];
 
 const C = {
   bg: "#1e1e2e", surface: "#2a2a3c", text: "#cdd6f4", sub: "#9399b2",
@@ -18,6 +28,11 @@ export interface EventDraft {
   startTime: number;
   endTime: number;
   description?: string;
+  location?: string;
+  url?: string;
+  allDay?: boolean;
+  reminderMin?: number;
+  recur?: Recur;
   fields?: Record<string, any>; // #8: custom schema field values
 }
 
@@ -45,9 +60,14 @@ export function EventModal({
   const [start, setStart] = useState(new Date(initial.startTime));
   const [end, setEnd] = useState(new Date(initial.endTime));
   const [desc, setDesc] = useState(initial.description || "");
+  const [location, setLocation] = useState(initial.location || "");
+  const [url, setUrl] = useState(initial.url || "");
+  const [allDay, setAllDay] = useState(!!initial.allDay);
+  const [reminderMin, setReminderMin] = useState(initial.reminderMin ?? 10);
+  const [recur, setRecur] = useState<Recur | undefined>(initial.recur);
   const [fields, setFields] = useState<Record<string, any>>(initial.fields || {});
   const [history, setHistory] = useState<HistoryEntry[]>([]);
-  const [pick, setPick] = useState<null | { which: "start" | "end"; mode: "date" | "time" }>(null);
+  const [pick, setPick] = useState<null | { which: "start" | "end" | "until"; mode: "date" | "time" }>(null);
   const [calOpen, setCalOpen] = useState(false); // #6: select-box dropdown open?
   const selCal = calendars.find((c) => c.id === calendarId);
 
@@ -58,11 +78,20 @@ export function EventModal({
       setStart(new Date(initial.startTime));
       setEnd(new Date(initial.endTime));
       setDesc(initial.description || "");
+      setLocation(initial.location || "");
+      setUrl(initial.url || "");
+      setAllDay(!!initial.allDay);
+      setReminderMin(initial.reminderMin ?? 10);
+      setRecur(initial.recur);
       setFields(initial.fields || {});
       setHistory([]);
       if (initial.id && loadHistory) loadHistory().then(setHistory).catch(() => setHistory([]));
     }
   }, [visible, initial]);
+  // Recurrence helpers — the freq chip row + interval + until.
+  const setFreq = (f: Freq | "none") =>
+    setRecur(f === "none" ? undefined : { freq: f, interval: recur?.interval || 1, until: recur?.until });
+  const setInterval = (n: number) => setRecur((r) => (r ? { ...r, interval: Math.max(1, n) } : r));
   const setField = (k: string, v: any) => setFields((f) => ({ ...f, [k]: v }));
   const fmtWhen = (ms: number) => new Date(ms).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   const shortDev = (d: string) => (d ? d.replace(/^scala-/, "").slice(0, 6) : "?");
@@ -74,6 +103,11 @@ export function EventModal({
     const cur = pick;
     setPick(null);
     if (!date || !cur) return;
+    if (cur.which === "until") {
+      const u = new Date(date); u.setHours(23, 59, 0, 0);
+      setRecur((r) => (r ? { ...r, until: u.getTime() } : r));
+      return;
+    }
     const target = cur.which === "start" ? start : end;
     const merged = new Date(target);
     if (cur.mode === "date") { merged.setFullYear(date.getFullYear(), date.getMonth(), date.getDate()); }
@@ -88,9 +122,20 @@ export function EventModal({
 
   const save = () => {
     if (!title.trim()) return;
+    let st = start.getTime(), en = end.getTime();
+    if (allDay) {
+      const s0 = new Date(start); s0.setHours(0, 0, 0, 0);
+      const e0 = new Date(end); e0.setHours(23, 59, 0, 0);
+      st = s0.getTime(); en = e0.getTime();
+    }
     onSave({
-      id: initial.id, title: title.trim(), startTime: start.getTime(), endTime: end.getTime(),
+      id: initial.id, title: title.trim(), startTime: st, endTime: en,
       description: desc.trim() || undefined,
+      location: location.trim() || undefined,
+      url: url.trim() || undefined,
+      allDay: allDay || undefined,
+      reminderMin,
+      recur,
       fields: schema.length ? fields : undefined,
     });
   };
@@ -133,17 +178,70 @@ export function EventModal({
             <Text style={s.label}>Title</Text>
             <TextInput style={s.input} value={title} onChangeText={setTitle} placeholder="Event title" placeholderTextColor={C.sub} autoFocus={!initial.id} />
 
+            <Pressable style={s.toggleRow} onPress={() => setAllDay((v) => !v)}>
+              <Text style={s.label}>All-day</Text>
+              <View style={[s.check, allDay && s.checkOn]}>{allDay && <Text style={{ color: C.bg, fontWeight: "800" }}>✓</Text>}</View>
+            </Pressable>
+
             <Text style={s.label}>Starts</Text>
             <View style={s.row}>
               <Pressable style={s.pill} onPress={() => setPick({ which: "start", mode: "date" })}><Text style={s.pillT}>{fmtDate(start)}</Text></Pressable>
-              <Pressable style={s.pill} onPress={() => setPick({ which: "start", mode: "time" })}><Text style={s.pillT}>{fmtTime(start)}</Text></Pressable>
+              {!allDay && <Pressable style={s.pill} onPress={() => setPick({ which: "start", mode: "time" })}><Text style={s.pillT}>{fmtTime(start)}</Text></Pressable>}
             </View>
 
             <Text style={s.label}>Ends</Text>
             <View style={s.row}>
               <Pressable style={s.pill} onPress={() => setPick({ which: "end", mode: "date" })}><Text style={s.pillT}>{fmtDate(end)}</Text></Pressable>
-              <Pressable style={s.pill} onPress={() => setPick({ which: "end", mode: "time" })}><Text style={s.pillT}>{fmtTime(end)}</Text></Pressable>
+              {!allDay && <Pressable style={s.pill} onPress={() => setPick({ which: "end", mode: "time" })}><Text style={s.pillT}>{fmtTime(end)}</Text></Pressable>}
             </View>
+
+            <Text style={s.label}>Location</Text>
+            <TextInput style={s.input} value={location} onChangeText={setLocation} placeholder="Where" placeholderTextColor={C.sub} />
+
+            <Text style={s.label}>Meeting link</Text>
+            <TextInput style={s.input} value={url} onChangeText={setUrl} placeholder="https://…" placeholderTextColor={C.sub} autoCapitalize="none" keyboardType="url" />
+
+            <Text style={s.label}>Reminder</Text>
+            <View style={s.calRow}>
+              {REMINDERS.map((r) => (
+                <Pressable key={r.min} onPress={() => setReminderMin(r.min)} style={[s.calChip, reminderMin === r.min && s.calChipOn]}>
+                  <Text style={[s.calChipT, reminderMin === r.min && { color: C.text }]}>{r.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+
+            <Text style={s.label}>Repeat</Text>
+            <View style={s.calRow}>
+              {FREQS.map((f) => {
+                const on = (recur?.freq || "none") === f.key;
+                return (
+                  <Pressable key={f.key} onPress={() => setFreq(f.key)} style={[s.calChip, on && s.calChipOn]}>
+                    <Text style={[s.calChipT, on && { color: C.text }]}>{f.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            {recur && (
+              <>
+                <View style={[s.row, { marginTop: 8, alignItems: "center" }]}>
+                  <Text style={[s.calChipT, { color: C.sub }]}>Every</Text>
+                  <TextInput
+                    style={[s.input, { width: 60, textAlign: "center" }]}
+                    value={String(recur.interval || 1)}
+                    onChangeText={(t) => setInterval(Number(t.replace(/[^0-9]/g, "")) || 1)}
+                    keyboardType="numeric"
+                  />
+                  <Text style={[s.calChipT, { color: C.sub, flex: 1 }]}>{recurLabel(recur)}</Text>
+                </View>
+                <View style={[s.row, { marginTop: 8, alignItems: "center" }]}>
+                  <Text style={[s.calChipT, { color: C.sub }]}>Until</Text>
+                  <Pressable style={[s.pill, { flex: 1 }]} onPress={() => setPick({ which: "until", mode: "date" })}>
+                    <Text style={s.pillT}>{recur.until ? new Date(recur.until).toLocaleDateString() : "No end date"}</Text>
+                  </Pressable>
+                  {recur.until && <Pressable onPress={() => setRecur((r) => (r ? { ...r, until: undefined } : r))} hitSlop={8}><Text style={{ color: C.danger, fontSize: 18 }}>×</Text></Pressable>}
+                </View>
+              </>
+            )}
 
             <Text style={s.label}>Notes</Text>
             <TextInput style={[s.input, { height: 72 }]} value={desc} onChangeText={setDesc} placeholder="Optional" placeholderTextColor={C.sub} multiline />
@@ -233,6 +331,9 @@ const s = StyleSheet.create({
   selectList: { marginTop: 4, backgroundColor: C.bg, borderRadius: 8, borderWidth: 1, borderColor: C.border, overflow: "hidden" },
   selectItem: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingVertical: 12, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: C.border },
   selectItemT: { flex: 1, color: C.sub, fontSize: 14 },
+  toggleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 4 },
+  check: { width: 26, height: 26, borderRadius: 6, borderWidth: 1, borderColor: C.border, backgroundColor: C.bg, alignItems: "center", justifyContent: "center", marginTop: 10 },
+  checkOn: { backgroundColor: C.accent, borderColor: C.accent },
   calRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   calChip: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: C.bg, borderRadius: 999, borderWidth: 1, borderColor: C.border, paddingHorizontal: 12, paddingVertical: 7 },
   calChipOn: { borderColor: C.primary, backgroundColor: C.surface },

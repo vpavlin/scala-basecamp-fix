@@ -10,7 +10,7 @@ import { store, Calendar, CalEvent, colorForId } from "./src/lib/store";
 import {
   onChange, startSyncing, joinFromInvite, createEvent, updateEvent, deleteEvent,
   createCalendar, buildInvite, getSharedNode, setSharedNode,
-  updateCalendarMeta, getAlias, setAlias, getEventHistory, myDeviceId, setMemberRole,
+  updateCalendarMeta, getAlias, setAlias, getEventHistory, getDeviceId, setMemberRole,
 } from "./src/lib/calendar";
 import { FieldDef } from "./src/components/EventModal";
 
@@ -18,6 +18,7 @@ const FIELD_TYPES = ["text", "longtext", "number", "date", "datetime", "bool", "
 import { deliveryAvailable, getDebug, refreshDebug } from "./src/lib/scala-sync";
 import { ensureNotifyPermission, scheduleReminders } from "./src/lib/notify";
 import { MonthGrid } from "./src/components/MonthGrid";
+import { expandEvents } from "./src/lib/recur";
 import { EventModal, EventDraft } from "./src/components/EventModal";
 import { Drawer } from "./src/components/Drawer";
 import { QRModal } from "./src/components/QRModal";
@@ -94,7 +95,10 @@ export default function App() {
   }, [refresh]);
 
   const writable = useMemo(() => cals.filter((c) => c.encryptionKey), [cals]);
-  const me = useMemo(() => myDeviceId(), [cals]);
+  // Real stable per-install id (SecureStore), loaded async — NOT the "scala-default"
+  // placeholder that myDeviceId() returns before the clock initializes.
+  const [me, setMe] = useState("");
+  useEffect(() => { getDeviceId().then(setMe).catch(() => {}); }, []);
   const displayName = useCallback((c: Calendar) => aliasMap[c.id] || c.name, [aliasMap]);
   const roleOf = useCallback((c: Calendar): string => {
     if (!c.rolesConfigured) return "open";
@@ -143,10 +147,18 @@ export default function App() {
   };
   const copyIdentity = async () => { await Clipboard.setStringAsync(me); Alert.alert("Copied", "Your identity is on the clipboard — share it so an owner can add you."); };
   const colorFor = useCallback((id: string) => colorForId(id), []);
-  const dayEvents = useMemo(
-    () => events.filter((e) => sameDay(new Date(e.startTime), selected)).sort((a, b) => a.startTime - b.startTime),
-    [events, selected],
-  );
+  // Expand recurrence occurrences for the selected day (non-recurring events pass through once).
+  const dayEvents = useMemo(() => {
+    const ds = new Date(selected); ds.setHours(0, 0, 0, 0);
+    const de = new Date(selected); de.setHours(23, 59, 59, 999);
+    return expandEvents(events, ds.getTime(), de.getTime()).filter((o) => sameDay(new Date(o.startTime), selected));
+  }, [events, selected]);
+  // Occurrences across the visible month (± a week for grid spillover) → month-grid dots.
+  const monthEvents = useMemo(() => {
+    const ws = new Date(cursor.getFullYear(), cursor.getMonth(), 1).getTime() - 7 * 864e5;
+    const we = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0, 23, 59, 59, 999).getTime() + 7 * 864e5;
+    return expandEvents(events, ws, we);
+  }, [events, cursor]);
 
   const openNew = () => {
     if (writable.length === 0) { Alert.alert("No calendar", "Create or join a calendar first."); setDrawer(true); return; }
@@ -157,14 +169,28 @@ export default function App() {
       draft: { title: "", startTime: atHour(selected, 9).getTime(), endTime: atHour(selected, 10).getTime() },
     });
   };
-  const openEdit = (ev: CalEvent) =>
-    setModal({ open: true, editing: ev, calId: ev.calendarId, draft: { id: ev.id, title: ev.title, startTime: ev.startTime, endTime: ev.endTime, description: ev.description, fields: ev.fields } });
+  // Series-based v1: editing an occurrence edits the MASTER (found by id in `events`),
+  // so the editor shows the real start date + recurrence rule and changes apply to the series.
+  const openEdit = (occ: CalEvent) => {
+    const m = events.find((e) => e.id === occ.id) || occ;
+    setModal({
+      open: true, editing: m, calId: m.calendarId,
+      draft: {
+        id: m.id, title: m.title, startTime: m.startTime, endTime: m.endTime, description: m.description,
+        location: m.location, url: m.url, allDay: m.allDay, reminderMin: m.reminderMin, recur: m.recur, fields: m.fields,
+      },
+    });
+  };
 
   const saveEvent = async (d: EventDraft) => {
+    const common = {
+      title: d.title, startTime: d.startTime, endTime: d.endTime, description: d.description,
+      location: d.location, url: d.url, allDay: d.allDay, reminderMin: d.reminderMin, recur: d.recur, fields: d.fields,
+    };
     if (modal.editing) {
-      await updateEvent({ ...modal.editing, title: d.title, startTime: d.startTime, endTime: d.endTime, description: d.description, fields: d.fields });
+      await updateEvent({ ...modal.editing, ...common });
     } else {
-      await createEvent(modal.calId, { title: d.title, startTime: d.startTime, endTime: d.endTime, description: d.description, fields: d.fields });
+      await createEvent(modal.calId, common);
     }
     setModal((m) => ({ ...m, open: false }));
   };
@@ -215,7 +241,7 @@ export default function App() {
         <View style={s.grid}>
           <MonthGrid
             month={cursor.getMonth()} year={cursor.getFullYear()}
-            events={events} selected={selected} colorFor={colorFor} onSelect={setSelected}
+            events={monthEvents} selected={selected} colorFor={colorFor} onSelect={setSelected}
           />
         </View>
 
@@ -225,13 +251,15 @@ export default function App() {
         <ScrollView style={{ flex: 1 }}>
           {dayEvents.length === 0 && <Text style={[s.sub, { padding: 16 }]}>No events. Tap + to add one.</Text>}
           {dayEvents.map((ev) => (
-            <Pressable key={ev.id} style={s.event} onPress={() => openEdit(ev)}>
+            <Pressable key={`${ev.id}-${ev.startTime}`} style={s.event} onPress={() => openEdit(ev)}>
               <View style={[s.dot, { backgroundColor: colorFor(ev.calendarId) }]} />
               <View style={{ flex: 1 }}>
-                <Text style={s.evTitle}>{ev.title}</Text>
+                <Text style={s.evTitle}>{ev.title}{ev.recur ? "  ↻" : ""}</Text>
                 <Text style={s.sub}>
-                  {new Date(ev.startTime).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
-                  {" – "}{new Date(ev.endTime).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+                  {ev.allDay
+                    ? "All day"
+                    : `${new Date(ev.startTime).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })} – ${new Date(ev.endTime).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`}
+                  {ev.location ? ` · ${ev.location}` : ""}
                   {ev.description ? ` · ${ev.description}` : ""}
                 </Text>
               </View>
