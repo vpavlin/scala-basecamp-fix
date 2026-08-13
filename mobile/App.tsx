@@ -15,7 +15,7 @@ import {
 import { FieldDef } from "./src/components/EventModal";
 
 const FIELD_TYPES = ["text", "longtext", "number", "date", "datetime", "bool", "url", "enum", "color"];
-import { deliveryAvailable, getDebug, refreshDebug, meshAvailable, forceMesh, meshInfo } from "./src/lib/scala-sync";
+import { deliveryAvailable, getDebug, refreshDebug } from "./src/lib/scala-sync";
 import { ensureNotifyPermission, scheduleReminders } from "./src/lib/notify";
 import { MonthGrid } from "./src/components/MonthGrid";
 import { expandEvents } from "./src/lib/recur";
@@ -234,13 +234,6 @@ export default function App() {
     Alert.alert("Joined", `Syncing "${cal.name}"`);
   };
   const toggleShared = async (v: boolean) => { setShared(v); await setSharedNode(v); Alert.alert(v ? "Shared node ON" : "Shared node OFF", "Restart Scala to apply."); };
-  // The mesh is transparent (the transport auto-arms it when the internet drops). This is
-  // just the optional "conference" FORCE — keep it meshing even when the fleet looks healthy.
-  const [meshForce, setMeshForce] = useState(false);
-  const toggleMeshForce = (v: boolean) => {
-    if (v && !meshAvailable()) { Alert.alert("Not available", "The BLE mesh needs a device build (Android)."); return; }
-    forceMesh(v); setMeshForce(v);
-  };
   const shiftMonth = (delta: number) => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1));
 
   return (
@@ -308,14 +301,6 @@ export default function App() {
                   <Text style={s.sub}>Device-wide Logos Delivery. Restart to apply.</Text>
                 </View>
                 <Switch value={shared} onValueChange={toggleShared} trackColor={{ true: C.primary, false: C.border }} thumbColor="#fff" />
-              </View>
-
-              <View style={s.rowBetween}>
-                <View style={{ flex: 1, paddingRight: 10 }}>
-                  <Text style={s.pLabel}>Force offline mesh (BLE)</Text>
-                  <Text style={s.sub}>Bluetooth mesh with nearby phones turns on automatically when there's no internet. Flip this to keep it on (conference mode).{meshInfo().armed ? ` · on, ${meshInfo().peers} peer(s)` : ""}</Text>
-                </View>
-                <Switch value={meshForce} onValueChange={toggleMeshForce} trackColor={{ true: C.accent, false: C.border }} thumbColor="#fff" />
               </View>
 
               {/* Device identity — a device-wide property (not per-calendar). Share it so an
