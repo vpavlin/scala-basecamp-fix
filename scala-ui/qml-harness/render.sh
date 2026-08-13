@@ -16,7 +16,8 @@ g++ -std=c++17 -fPIC harness.cpp -o harness \
   -L"$QB/lib" -L"$QDECL/lib" -lQt6Core -lQt6Gui -lQt6Qml -lQt6Quick
 mkdir -p shots; rm -f shots/*.png
 export QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software QT_QUICK_CONTROLS_STYLE=Basic
-export QML2_IMPORT_PATH="$QDECL/lib/qt-6/qml:$DS" QML_IMPORT_PATH="$QML2_IMPORT_PATH"
+IMPORTS="$QDECL/lib/qt-6/qml:$DS"
+export QML2_IMPORT_PATH="$IMPORTS" QML_IMPORT_PATH="$IMPORTS"
 export LD_LIBRARY_PATH="$QB/lib:$QDECL/lib"
 ./harness "$HERE/../qml/CalendarView.qml" "$HERE/shots"
 echo "→ shots/ : $(ls shots/*.png | wc -l) screenshots"
