@@ -107,6 +107,8 @@ export async function startSync(opts: {
     onReceive: adapterReceive,
     onStatus: opts.onStatus,
   });
+  // Register the BLE mesh radio once — the transport auto-arms it if the fleet path drops.
+  registerMeshRadio();
 }
 
 /** Add a calendar's route to the live node (after creating/joining one). */
@@ -133,12 +135,14 @@ export function stopSync(): Promise<void> {
 
 // ── BLE offline mesh (ADR 0012) — opt-in second bearer for no-internet rooms ──
 import { LoamMeshRadio } from "./logos-transport-pkg/native/blemesh/loam-mesh-radio";
-let meshRadio: LoamMeshRadio | null = null;
 export function meshAvailable(): boolean { return LoamMeshRadio.available(); }
-export async function setMesh(on: boolean): Promise<void> {
-  if (on) { meshRadio = new LoamMeshRadio(); await transport.enableMesh(meshRadio); }
-  else { await transport.disableMesh(); meshRadio = null; }
+// Register the BLE radio capability ONCE — the transport then AUTO-ARMS the mesh when the
+// fleet path drops and duty-cycles it down when healthy (transparent; no per-app toggle).
+export function registerMeshRadio(): void {
+  transport.setMeshRadio(LoamMeshRadio.available() ? () => new LoamMeshRadio() : null);
 }
-export function meshInfo(): { on: boolean; peers: number } {
-  return { on: transport.meshEnabled(), peers: transport.meshPeers() };
+// The one user-facing control: force the offline mesh on (conference mode). Off = automatic.
+export function forceMesh(on: boolean): void { transport.forceMesh(on); }
+export function meshInfo(): { forced: boolean; armed: boolean; peers: number } {
+  return { forced: transport.meshForcedOn(), armed: transport.meshEnabled(), peers: transport.meshPeers() };
 }

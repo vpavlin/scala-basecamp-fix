@@ -15,7 +15,7 @@ import {
 import { FieldDef } from "./src/components/EventModal";
 
 const FIELD_TYPES = ["text", "longtext", "number", "date", "datetime", "bool", "url", "enum", "color"];
-import { deliveryAvailable, getDebug, refreshDebug, meshAvailable, setMesh as setMeshBearer, meshInfo } from "./src/lib/scala-sync";
+import { deliveryAvailable, getDebug, refreshDebug, meshAvailable, forceMesh, meshInfo } from "./src/lib/scala-sync";
 import { ensureNotifyPermission, scheduleReminders } from "./src/lib/notify";
 import { MonthGrid } from "./src/components/MonthGrid";
 import { expandEvents } from "./src/lib/recur";
@@ -234,11 +234,12 @@ export default function App() {
     Alert.alert("Joined", `Syncing "${cal.name}"`);
   };
   const toggleShared = async (v: boolean) => { setShared(v); await setSharedNode(v); Alert.alert(v ? "Shared node ON" : "Shared node OFF", "Restart Scala to apply."); };
-  const [meshOn, setMeshOn] = useState(false);
-  const toggleMesh = async (v: boolean) => {
-    if (v && !meshAvailable()) { Alert.alert("Not available", "The BLE mesh needs a device build (Android). Not present here."); return; }
-    try { await setMeshBearer(v); setMeshOn(v); Alert.alert(v ? "Offline mesh ON" : "Offline mesh OFF", v ? "Syncs with nearby phones over Bluetooth when the internet is down." : ""); }
-    catch (e) { Alert.alert("Mesh error", msg(e)); }
+  // The mesh is transparent (the transport auto-arms it when the internet drops). This is
+  // just the optional "conference" FORCE — keep it meshing even when the fleet looks healthy.
+  const [meshForce, setMeshForce] = useState(false);
+  const toggleMeshForce = (v: boolean) => {
+    if (v && !meshAvailable()) { Alert.alert("Not available", "The BLE mesh needs a device build (Android)."); return; }
+    forceMesh(v); setMeshForce(v);
   };
   const shiftMonth = (delta: number) => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1));
 
@@ -311,10 +312,10 @@ export default function App() {
 
               <View style={s.rowBetween}>
                 <View style={{ flex: 1, paddingRight: 10 }}>
-                  <Text style={s.pLabel}>Offline mesh (BLE)</Text>
-                  <Text style={s.sub}>Sync with nearby phones over Bluetooth when there's no internet.{meshOn ? ` · ${meshInfo().peers} peer(s)` : ""}</Text>
+                  <Text style={s.pLabel}>Force offline mesh (BLE)</Text>
+                  <Text style={s.sub}>Bluetooth mesh with nearby phones turns on automatically when there's no internet. Flip this to keep it on (conference mode).{meshInfo().armed ? ` · on, ${meshInfo().peers} peer(s)` : ""}</Text>
                 </View>
-                <Switch value={meshOn} onValueChange={toggleMesh} trackColor={{ true: C.accent, false: C.border }} thumbColor="#fff" />
+                <Switch value={meshForce} onValueChange={toggleMeshForce} trackColor={{ true: C.accent, false: C.border }} thumbColor="#fff" />
               </View>
 
               {/* Device identity — a device-wide property (not per-calendar). Share it so an
