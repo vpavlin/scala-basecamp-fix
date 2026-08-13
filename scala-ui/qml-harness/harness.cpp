@@ -37,7 +37,7 @@ QString MockLogos::callModule(const QString &mod, const QString &method, const Q
         fprintf(stderr, "[CALL] %s(%s)\n", qPrintable(method), qPrintable(parts.join(" | ")));
     }
     if (method == "listCalendars")
-        return QString(R"([{"id":"c1","name":"Freequencies","color":"#89b4fa","description":"Lisbon nightlife planner","encryptionKey":"k","creatorId":"0xme","owner":"0xme","roles":{},"rolesConfigured":false,"schema":[{"key":"venue","label":"Venue","type":"text"},{"key":"lineup","label":"Lineup","type":"longtext"},{"key":"vip","label":"VIP","type":"bool"},{"key":"status","label":"Status","type":"enum","options":["confirmed","tentative"]}]}])");
+        return QString(R"([{"id":"c1","name":"Plain","color":"#a6e3a1","encryptionKey":"k","creatorId":"0xme","owner":"0xme","roles":{},"rolesConfigured":false,"schema":[]},{"id":"c2","name":"Freequencies","color":"#89b4fa","description":"nightlife","encryptionKey":"k","creatorId":"0xme","owner":"0xme","roles":{},"rolesConfigured":false,"schema":[{"key":"venue","label":"Venue","type":"text"},{"key":"vip","label":"VIP","type":"bool"},{"key":"status","label":"Status","type":"enum","options":["confirmed","tentative"]}]}])");
     if (method == "listEvents")
         return QString(R"([{"id":"e1","calendarId":"c1","title":"Opening night","startTime":%1,"endTime":%2,"fields":{"venue":"Club X","vip":true,"status":"confirmed"}}])")
             .arg(EV_START).arg(EV_END);
@@ -86,15 +86,10 @@ int main(int argc, char **argv) {
     // Let the 3s poll + first frame settle, then screenshot each surface in turn.
     QTimer::singleShot(1200, [&] { grab(&view, out + "/01-main.png"); });
     // New-calendar dialog now has the custom-fields editor (matches settings).
-    QTimer::singleShot(1600, [&] { runJs(&view, "newCalPopup.open()"); });
-    QTimer::singleShot(2000, [&] {
-        runJs(&view, "newCalName.text='Afters'"); runJs(&view, "newCalDesc.text='late night'");
-        runJs(&view, "ncNewKey.text='room'"); runJs(&view, "ncNewLabel.text='Room'"); runJs(&view, "root.ncNewType='text'");
-    });
-    QTimer::singleShot(2300, [&] { fprintf(stderr, "--- +Add field (new cal) ---\n"); runJs(&view, "addNcField()"); });
-    QTimer::singleShot(2600, [&] { grab(&view, out + "/02-newcal-fields.png"); });
-    QTimer::singleShot(2900, [&] { fprintf(stderr, "--- Create (should call createCalendar + updateCalendarMeta w/ schema) ---\n"); runJs(&view, "newCalPopup.createNow()"); });
-    QTimer::singleShot(3300, [&] { app.quit(); });
+    QTimer::singleShot(1600, [&] { runJs(&view, "openNewEvent()"); });
+    QTimer::singleShot(2000, [&] { grab(&view, out + "/01-newevent-plain.png"); fprintf(stderr, "--- switch to c2 (schema calendar) ---\n"); runJs(&view, "evCalSelect.activated(1)"); });
+    QTimer::singleShot(2500, [&] { grab(&view, out + "/02-newevent-schema.png"); });
+    QTimer::singleShot(2900, [&] { app.quit(); });
     return app.exec();
 }
 #include "harness.moc"

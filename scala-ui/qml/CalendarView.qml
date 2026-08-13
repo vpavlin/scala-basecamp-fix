@@ -631,7 +631,13 @@ Item {
                 }
                 onActivated: function (index) {
                     var m = root.writableCalendars()
-                    if (index >= 0 && index < m.length) root.editCalId = m[index].id
+                    if (index >= 0 && index < m.length) {
+                        root.editCalId = m[index].id
+                        // Re-seed custom fields for the newly-picked calendar — its schema
+                        // differs, so the inputs must rebuild (else fields never show unless
+                        // the target calendar happened to be the one seeded on open).
+                        seedFieldVals(root.editCalId, editingEvent)
+                    }
                 }
                 contentItem: LogosText {
                     leftPadding: 10; rightPadding: 28
