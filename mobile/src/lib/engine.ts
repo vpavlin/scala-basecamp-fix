@@ -79,6 +79,8 @@ export interface FoldedCalendar {
   id: string;
   name: string;
   color: string;
+  description: string;
+  schema: any[];
   events: any[];
 }
 
@@ -90,13 +92,19 @@ export function foldCalendar(calId: string, log: Event[]): FoldedCalendar {
   const ordered = mergeEvents(log);
   let name = "";
   let color = "";
+  let description = "";
+  let schema: any[] = []; // OPTIONAL custom-field defs; empty by default (plain calendar)
   const events = new Map<string, any>(); // event id -> payload
   const tombstones = new Set<string>();
 
   for (const e of ordered) {
     if (e.type === ET.CAL_META) {
-      if (Object.prototype.hasOwnProperty.call(e.payload, "name")) name = e.payload.name ?? name;
-      if (Object.prototype.hasOwnProperty.call(e.payload, "color")) color = e.payload.color ?? color;
+      // LWW per field; `schema` is replaced whole by the latest writer.
+      const p: any = e.payload;
+      if (Object.prototype.hasOwnProperty.call(p, "name")) name = p.name ?? name;
+      if (Object.prototype.hasOwnProperty.call(p, "color")) color = p.color ?? color;
+      if (Object.prototype.hasOwnProperty.call(p, "description")) description = p.description ?? description;
+      if (Array.isArray(p.schema)) schema = p.schema;
     } else if (e.type === ET.EVENT_PUT) {
       const id: string = e.payload?.id ?? "";
       if (!id || tombstones.has(id)) continue; // tombstone terminal
@@ -113,7 +121,7 @@ export function foldCalendar(calId: string, log: Event[]): FoldedCalendar {
 
   // Match C++ std::map iteration: events ordered by id string.
   const ids = [...events.keys()].sort();
-  return { id: calId, name, color, events: ids.map((id) => events.get(id)) };
+  return { id: calId, name, color, description, schema, events: ids.map((id) => events.get(id)) };
 }
 
 // ── Clock: stamps local events, advances past ingested causes ────────────────

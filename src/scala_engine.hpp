@@ -50,14 +50,20 @@ namespace ET {
 // LWW upsert by event id; a tombstone is TERMINAL (a later edit can't resurrect it).
 inline json foldCalendar(const std::string& calId, const std::vector<Event>& log) {
     auto ordered = mergeEvents(log);
-    std::string name, color;
+    std::string name, color, description;
+    json schema = json::array();          // OPTIONAL custom-field definitions; empty by
+                                          // default so a plain calendar shows nothing extra.
     std::map<std::string, json> events;   // event id -> event payload
     std::set<std::string> tombstones;
 
     for (const auto& e : ordered) {
         if (e.type == ET::CAL_META) {
-            if (e.payload.contains("name"))  name  = e.payload.value("name", name);
-            if (e.payload.contains("color")) color = e.payload.value("color", color);
+            // cal.meta is LWW per field. name/color/description are single-valued;
+            // `schema` is replaced whole by the latest writer (an admin edits the set).
+            if (e.payload.contains("name"))        name        = e.payload.value("name", name);
+            if (e.payload.contains("color"))       color       = e.payload.value("color", color);
+            if (e.payload.contains("description")) description = e.payload.value("description", description);
+            if (e.payload.contains("schema") && e.payload["schema"].is_array()) schema = e.payload["schema"];
         } else if (e.type == ET::EVENT_PUT) {
             std::string id = e.payload.value("id", std::string());
             if (id.empty() || tombstones.count(id)) continue;   // tombstone terminal
@@ -73,7 +79,8 @@ inline json foldCalendar(const std::string& calId, const std::vector<Event>& log
 
     json evArr = json::array();
     for (auto& kv : events) evArr.push_back(kv.second);
-    return json{{"id", calId}, {"name", name}, {"color", color}, {"events", evArr}};
+    return json{{"id", calId}, {"name", name}, {"color", color},
+                {"description", description}, {"schema", schema}, {"events", evArr}};
 }
 
 } // namespace scala

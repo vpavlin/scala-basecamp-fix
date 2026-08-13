@@ -176,15 +176,49 @@ export async function deleteEvent(ev: CalEvent): Promise<void> {
 // registers membership, starts syncing, and publishes a cal.meta event. The
 // invite (buildInvite) carries name+key so a joiner gets metadata even before the
 // first cal.meta event reaches them.
-export async function createCalendar(name: string, color = "#89b4fa"): Promise<Calendar> {
+export async function createCalendar(name: string, color = "#89b4fa", description = ""): Promise<Calendar> {
   const id = Crypto.randomUUID();
   const encryptionKey = Crypto.randomUUID() + Crypto.randomUUID();
   const nm = name.trim() || "My calendar";
   await store.upsertReg({ id, key: encryptionKey, name: nm, color, isShared: true, creatorId: await getDeviceId() });
   await sync.joinCalendar(id, encryptionKey);
-  await publishAndApply(id, await mkEvent(ET.CAL_META, { name: nm, color }));
+  const meta: any = { name: nm, color };
+  if (description.trim()) meta.description = description.trim();
+  await publishAndApply(id, await mkEvent(ET.CAL_META, meta));
   notifyChange();
   return { id, name: nm, color, isShared: true, encryptionKey, creatorId: deviceId };
+}
+
+// Edit a calendar's SHARED metadata (cal.meta, LWW per field) — name/color/description
+// travel in the event log to every device. Only the changed fields are written.
+export async function updateCalendarMeta(
+  calId: string,
+  fields: { name?: string; color?: string; description?: string },
+): Promise<void> {
+  const p: any = {};
+  if (fields.name !== undefined) p.name = fields.name.trim();
+  if (fields.color !== undefined) p.color = fields.color;
+  if (fields.description !== undefined) p.description = fields.description.trim();
+  if (Object.keys(p).length === 0) return;
+  if (p.name !== undefined || p.color !== undefined) {
+    const reg = (await store.getRegistry()).find((r) => r.id === calId);
+    if (reg) await store.upsertReg({ ...reg, name: p.name ?? reg.name, color: p.color ?? reg.color });
+  }
+  await publishAndApply(calId, await mkEvent(ET.CAL_META, p));
+  notifyChange();
+}
+
+// Device-LOCAL alias (never synced): overrides the display name on THIS phone while the
+// official cal.meta name is preserved for everyone. Empty alias clears it.
+export async function getAlias(calId: string): Promise<string> {
+  try { return (await SecureStore.getItemAsync("scala-alias-" + calId)) || ""; } catch { return ""; }
+}
+export async function setAlias(calId: string, alias: string): Promise<void> {
+  try {
+    if (alias.trim()) await SecureStore.setItemAsync("scala-alias-" + calId, alias.trim());
+    else await SecureStore.deleteItemAsync("scala-alias-" + calId);
+  } catch { /* ignore */ }
+  notifyChange();
 }
 
 export async function joinFromInvite(link: string): Promise<Calendar | null> {
