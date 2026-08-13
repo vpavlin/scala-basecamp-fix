@@ -41,6 +41,7 @@ QString MockLogos::callModule(const QString &mod, const QString &method, const Q
     if (method == "listEvents")
         return QString(R"([{"id":"e1","calendarId":"c1","title":"Opening night","startTime":%1,"endTime":%2,"fields":{"venue":"Club X","vip":true,"status":"confirmed"}}])")
             .arg(EV_START).arg(EV_END);
+    if (method == "createCalendar") return "cNEW"; // return a fake id so createNow proceeds to schema
     if (method == "getIdentity") return "0xme00000000000000000000000000000000000000";
     if (method == "diagnostics")
         return QString(R"({"deliveryStatus":"Connected","ctxReady":true,"calendarCount":1,"eventCount":1,"identity":"0xme00000000000000000000000000000000000000","dataDir":"/tmp/scala","calendars":[]})");
@@ -84,17 +85,16 @@ int main(int argc, char **argv) {
 
     // Let the 3s poll + first frame settle, then screenshot each surface in turn.
     QTimer::singleShot(1200, [&] { grab(&view, out + "/01-main.png"); });
-    // Reproduce "add a custom field + Save" and watch what the view sends the core.
-    QTimer::singleShot(1600, [&] { runJs(&view, "openCalSettings(calendars[0])"); });
+    // New-calendar dialog now has the custom-fields editor (matches settings).
+    QTimer::singleShot(1600, [&] { runJs(&view, "newCalPopup.open()"); });
     QTimer::singleShot(2000, [&] {
-        runJs(&view, "setNewKey.text='dj'"); runJs(&view, "setNewLabel.text='DJ'");
-        runJs(&view, "root.setNewType='text'");
+        runJs(&view, "newCalName.text='Afters'"); runJs(&view, "newCalDesc.text='late night'");
+        runJs(&view, "ncNewKey.text='room'"); runJs(&view, "ncNewLabel.text='Room'"); runJs(&view, "root.ncNewType='text'");
     });
-    QTimer::singleShot(2300, [&] { fprintf(stderr, "--- clicking +Add field ---\n"); runJs(&view, "addSchemaField()"); });
-    QTimer::singleShot(2600, [&] { grab(&view, out + "/02-after-addfield.png"); });
-    QTimer::singleShot(2800, [&] { fprintf(stderr, "--- clicking Save (mock no-ops updateCalendarMeta = stale-core sim) ---\n"); runJs(&view, "saveCalSettings()"); });
-    QTimer::singleShot(3100, [&] { grab(&view, out + "/03-save-error.png"); });
-    QTimer::singleShot(3500, [&] { app.quit(); });
+    QTimer::singleShot(2300, [&] { fprintf(stderr, "--- +Add field (new cal) ---\n"); runJs(&view, "addNcField()"); });
+    QTimer::singleShot(2600, [&] { grab(&view, out + "/02-newcal-fields.png"); });
+    QTimer::singleShot(2900, [&] { fprintf(stderr, "--- Create (should call createCalendar + updateCalendarMeta w/ schema) ---\n"); runJs(&view, "newCalPopup.createNow()"); });
+    QTimer::singleShot(3300, [&] { app.quit(); });
     return app.exec();
 }
 #include "harness.moc"

@@ -844,17 +844,42 @@ Item {
 
     // ── new-calendar popup ───────────────────────────────────────────────────
     property string newCalColor: "#89b4fa"
+    property string ncNewType: "text"   // staged field type in the new-calendar add-row
     readonly property var presetColors: ["#a6e3a1","#89b4fa","#f9e2af","#f38ba8","#cba6f7","#94e2d5","#fab387","#74c7ec"]
+    // Add a custom field to the NEW-calendar schema (mirrors addSchemaField).
+    function addNcField() {
+        var k = ncNewKey.text.trim()
+        if (k === "") return
+        var opts = []
+        if (root.ncNewType === "enum") {
+            var parts = ncNewOptions.text.split(",")
+            for (var i = 0; i < parts.length; i++) { var p = parts[i].trim(); if (p.length) opts.push(p) }
+        }
+        newCalSchemaModel.append({ key: k, label: ncNewLabel.text.trim() || k, ftype: root.ncNewType, opts: JSON.stringify(opts) })
+        ncNewKey.text = ""; ncNewLabel.text = ""; ncNewOptions.text = ""; root.ncNewType = "text"
+    }
     Popup {
         id: newCalPopup
         anchors.centerIn: Overlay.overlay
         width: 500; modal: true; padding: Theme.spacing.large
         background: Rectangle { radius: Theme.spacing.radiusMedium; color: Theme.palette.backgroundElevated; border.width: 1; border.color: Theme.palette.borderHairline }
-        onOpened: { newCalName.text = ""; newCalDesc.text = ""; root.newCalColor = root.presetColors[1] }
+        onOpened: {
+            newCalName.text = ""; newCalDesc.text = ""; root.newCalColor = root.presetColors[1]
+            newCalSchemaModel.clear(); ncNewKey.text = ""; ncNewLabel.text = ""; ncNewOptions.text = ""; root.ncNewType = "text"
+        }
         function createNow() {
             var id = String(root.core("createCalendar", [newCalName.text.trim(), root.newCalColor]))
+            if (id === "") { newCalPopup.close(); root.refresh(); return }
+            var sch = []
+            for (var i = 0; i < newCalSchemaModel.count; i++) {
+                var it = newCalSchemaModel.get(i)
+                var e = { key: it.key, label: it.label, type: it.ftype }
+                var o = JSON.parse(it.opts || "[]")
+                if (it.ftype === "enum") e.options = o
+                sch.push(e)
+            }
             var d = newCalDesc.text.trim()
-            if (id !== "" && d !== "") root.core("updateCalendarMeta", [id, JSON.stringify({ description: d })])
+            if (d !== "" || sch.length > 0) root.core("updateCalendarMeta", [id, JSON.stringify({ description: d, schema: sch })])
             newCalPopup.close(); root.refresh()
         }
         ColumnLayout {
@@ -862,24 +887,88 @@ Item {
 
             LogosText { text: "New calendar"; color: Theme.palette.text; font.pixelSize: 18; font.weight: Theme.typography.weightMedium }
 
-            LogosText { text: "Name"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
-            Field { id: newCalName; Layout.fillWidth: true; placeholderText: "Calendar name" }
+            Flickable {
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.min(contentHeight, 520)
+                contentWidth: width; contentHeight: newCalBody.implicitHeight
+                clip: true
+                ScrollBar.vertical: ScrollBar {}
+                ColumnLayout {
+                    id: newCalBody
+                    width: parent.width; spacing: Theme.spacing.small
 
-            LogosText { text: "Description"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
-            Field { id: newCalDesc; Layout.fillWidth: true; placeholderText: "Optional description" }
+                    LogosText { text: "Name"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
+                    Field { id: newCalName; Layout.fillWidth: true; placeholderText: "Calendar name" }
 
-            LogosText { text: "Color"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
-            Flow {
-                Layout.fillWidth: true; spacing: 8
-                Repeater {
-                    model: root.presetColors
-                    delegate: Rectangle {
-                        width: 28; height: 28; radius: 14; color: modelData
-                        border.width: root.newCalColor === modelData ? 3 : 0; border.color: Theme.palette.text
-                        MouseArea { anchors.fill: parent; onClicked: root.newCalColor = modelData }
+                    LogosText { text: "Description"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
+                    Field { id: newCalDesc; Layout.fillWidth: true; placeholderText: "Optional description" }
+
+                    LogosText { text: "Color"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
+                    Flow {
+                        Layout.fillWidth: true; spacing: 8
+                        Repeater {
+                            model: root.presetColors
+                            delegate: Rectangle {
+                                width: 28; height: 28; radius: 14; color: modelData
+                                border.width: root.newCalColor === modelData ? 3 : 0; border.color: Theme.palette.text
+                                MouseArea { anchors.fill: parent; onClicked: root.newCalColor = modelData }
+                            }
+                        }
                     }
+
+                    Rectangle { Layout.fillWidth: true; height: 1; color: Theme.palette.borderHairline; Layout.topMargin: 4 }
+
+                    // ── custom fields editor (same as Calendar settings) ──
+                    LogosText { text: "Custom fields"; color: Theme.palette.text; font.pixelSize: 14; font.weight: Theme.typography.weightMedium }
+                    LogosText {
+                        visible: newCalSchemaModel.count === 0
+                        text: "Optional. Add typed fields to collect extra info on each event (venue, lineup…). You can also edit these later in the calendar's ⚙ settings."
+                        color: Theme.palette.textTertiary; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true
+                    }
+                    Repeater {
+                        model: newCalSchemaModel
+                        delegate: Rectangle {
+                            Layout.fillWidth: true; implicitHeight: 34; radius: Theme.spacing.radiusSmall; color: Theme.palette.backgroundInset
+                            RowLayout {
+                                anchors.fill: parent; anchors.leftMargin: Theme.spacing.small; anchors.rightMargin: Theme.spacing.small; spacing: Theme.spacing.small
+                                LogosText { text: (model.label || model.key); color: Theme.palette.text; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideRight }
+                                LogosText { text: model.ftype; color: Theme.palette.textSecondary; font.pixelSize: 12 }
+                                LogosText {
+                                    text: "✕"; color: Theme.palette.textTertiary; font.pixelSize: 14
+                                    MouseArea { anchors.fill: parent; anchors.margins: -4; onClicked: newCalSchemaModel.remove(index) }
+                                }
+                            }
+                        }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: Theme.spacing.small
+                        Field { id: ncNewKey; Layout.fillWidth: true; placeholderText: "key" }
+                        Field { id: ncNewLabel; Layout.fillWidth: true; placeholderText: "label" }
+                    }
+                    Flow {
+                        Layout.fillWidth: true; spacing: 6
+                        Repeater {
+                            model: root.fieldTypes
+                            delegate: Rectangle {
+                                height: 26; radius: 13; width: ncTLbl.width + 18
+                                color: root.ncNewType === modelData ? Theme.palette.backgroundSecondary : Theme.palette.background
+                                border.width: 1; border.color: root.ncNewType === modelData ? Theme.palette.primary : Theme.palette.borderHairline
+                                LogosText { id: ncTLbl; anchors.centerIn: parent; text: modelData; color: Theme.palette.text; font.pixelSize: 12 }
+                                MouseArea { anchors.fill: parent; onClicked: root.ncNewType = modelData }
+                            }
+                        }
+                    }
+                    Field {
+                        id: ncNewOptions
+                        visible: root.ncNewType === "enum"
+                        Layout.fillWidth: true; placeholderText: "enum options (comma-separated)"
+                    }
+                    LogosButton { text: "+ Add field"; enabled: ncNewKey.text.trim().length > 0; onClicked: root.addNcField() }
+
+                    ListModel { id: newCalSchemaModel }
                 }
             }
+
             RowLayout {
                 Layout.fillWidth: true; Layout.topMargin: Theme.spacing.small
                 Item { Layout.fillWidth: true }
