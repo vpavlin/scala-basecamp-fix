@@ -10,6 +10,7 @@ import { store, Calendar, CalEvent, colorForId } from "./src/lib/store";
 import {
   onChange, startSyncing, joinFromInvite, createEvent, updateEvent, deleteEvent,
   createCalendar, buildInvite, getSharedNode, setSharedNode,
+  updateCalendarMeta, getAlias, setAlias, getEventHistory, myDeviceId,
 } from "./src/lib/calendar";
 import { deliveryAvailable, getDebug, refreshDebug } from "./src/lib/scala-sync";
 import { MonthGrid } from "./src/components/MonthGrid";
@@ -46,6 +47,10 @@ export default function App() {
   });
 
   const [newCalName, setNewCalName] = useState("");
+  const [newCalDesc, setNewCalDesc] = useState("");
+  const [currentCalId, setCurrentCalId] = useState<string>("");     // #5: last-tapped calendar (preselected for new events)
+  const [aliasMap, setAliasMap] = useState<Record<string, string>>({}); // #7: device-local name overrides
+  const [calSet, setCalSet] = useState<{ cal: Calendar; name: string; desc: string; alias: string } | null>(null); // #7 settings sheet
   const [invite, setInvite] = useState("");
   const [lastInvite, setLastInvite] = useState("");
   const [qr, setQr] = useState<{ value: string; title: string } | null>(null);
@@ -60,8 +65,12 @@ export default function App() {
   const [scanning, setScanning] = useState(false);
 
   const refresh = useCallback(async () => {
-    setCals(await store.listCalendars());
+    const cs = await store.listCalendars();
+    setCals(cs);
     setEvents((await store.listEvents()).filter((e) => !e.deleted));
+    const am: Record<string, string> = {};
+    for (const c of cs) { const a = await getAlias(c.id); if (a) am[c.id] = a; }
+    setAliasMap(am);
   }, []);
 
   useEffect(() => {
@@ -76,6 +85,21 @@ export default function App() {
   }, [refresh]);
 
   const writable = useMemo(() => cals.filter((c) => c.encryptionKey), [cals]);
+  const me = useMemo(() => myDeviceId(), [cals]);
+  const displayName = useCallback((c: Calendar) => aliasMap[c.id] || c.name, [aliasMap]);
+  const roleOf = useCallback((c: Calendar): string => {
+    if (!c.rolesConfigured) return "open";
+    if (c.owner && c.owner === me) return "owner";
+    return c.roles?.[me] || "viewer";
+  }, [me]);
+  const openCalSettings = (c: Calendar) => setCalSet({ cal: c, name: c.name, desc: c.description || "", alias: aliasMap[c.id] || "" });
+  const saveCalSettings = async () => {
+    if (!calSet) return;
+    if (calSet.name.trim() && calSet.name !== calSet.cal.name) await updateCalendarMeta(calSet.cal.id, { name: calSet.name });
+    if ((calSet.desc || "") !== (calSet.cal.description || "")) await updateCalendarMeta(calSet.cal.id, { description: calSet.desc });
+    await setAlias(calSet.cal.id, calSet.alias);
+    setCalSet(null);
+  };
   const colorFor = useCallback((id: string) => colorForId(id), []);
   const dayEvents = useMemo(
     () => events.filter((e) => sameDay(new Date(e.startTime), selected)).sort((a, b) => a.startTime - b.startTime),
@@ -84,27 +108,29 @@ export default function App() {
 
   const openNew = () => {
     if (writable.length === 0) { Alert.alert("No calendar", "Create or join a calendar first."); setDrawer(true); return; }
+    // #5: default to the calendar you last tapped, not always the first one.
+    const calId = writable.find((c) => c.id === currentCalId)?.id || writable[0].id;
     setModal({
-      open: true, calId: writable[0].id,
+      open: true, calId,
       draft: { title: "", startTime: atHour(selected, 9).getTime(), endTime: atHour(selected, 10).getTime() },
     });
   };
   const openEdit = (ev: CalEvent) =>
-    setModal({ open: true, editing: ev, calId: ev.calendarId, draft: { id: ev.id, title: ev.title, startTime: ev.startTime, endTime: ev.endTime, description: ev.description } });
+    setModal({ open: true, editing: ev, calId: ev.calendarId, draft: { id: ev.id, title: ev.title, startTime: ev.startTime, endTime: ev.endTime, description: ev.description, fields: ev.fields } });
 
   const saveEvent = async (d: EventDraft) => {
     if (modal.editing) {
-      await updateEvent({ ...modal.editing, title: d.title, startTime: d.startTime, endTime: d.endTime, description: d.description });
+      await updateEvent({ ...modal.editing, title: d.title, startTime: d.startTime, endTime: d.endTime, description: d.description, fields: d.fields });
     } else {
-      await createEvent(modal.calId, { title: d.title, startTime: d.startTime, endTime: d.endTime, description: d.description });
+      await createEvent(modal.calId, { title: d.title, startTime: d.startTime, endTime: d.endTime, description: d.description, fields: d.fields });
     }
     setModal((m) => ({ ...m, open: false }));
   };
   const removeEvent = async () => { if (modal.editing) await deleteEvent(modal.editing); setModal((m) => ({ ...m, open: false })); };
 
   const doCreateCal = async () => {
-    const cal = await createCalendar(newCalName || "My calendar");
-    setNewCalName(""); setLastInvite(buildInvite(cal));
+    const cal = await createCalendar(newCalName || "My calendar", "#89b4fa", newCalDesc);
+    setNewCalName(""); setNewCalDesc(""); setCurrentCalId(cal.id); setLastInvite(buildInvite(cal));
     await startSyncing(undefined, setStatus);
     setQr({ value: buildInvite(cal), title: cal.name }); // show the QR right away
   };
@@ -194,11 +220,20 @@ export default function App() {
               <Text style={s.pLabel}>Your calendars</Text>
               {cals.length === 0 && <Text style={s.sub}>None yet.</Text>}
               {cals.map((c) => (
-                <View key={c.id} style={s.calRow}>
+                <Pressable key={c.id} onPress={() => { setCurrentCalId(c.id); setDrawer(false); }} style={s.calRow}>
                   <View style={[s.dot, { backgroundColor: colorForId(c.id) }]} />
-                  <Text style={s.calName}>{c.name}</Text>
-                  {c.encryptionKey ? <Pressable onPress={() => showShare(c)}><Text style={s.share}>Share</Text></Pressable> : <Text style={s.sub}>local</Text>}
-                </View>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <Text style={s.calName}>{displayName(c)}</Text>
+                      {currentCalId === c.id && <Text style={[s.roleBadge, { color: C.accent, borderColor: C.accent }]}>active</Text>}
+                      {!!aliasMap[c.id] && <Text style={s.roleBadge}>alias</Text>}
+                      {c.rolesConfigured && <Text style={s.roleBadge}>{roleOf(c)}</Text>}
+                    </View>
+                    {!!c.description && <Text style={s.sub} numberOfLines={2}>{c.description}</Text>}
+                  </View>
+                  <Pressable onPress={() => openCalSettings(c)} hitSlop={8}><Text style={s.share}>Edit</Text></Pressable>
+                  {c.encryptionKey ? <Pressable onPress={() => showShare(c)} hitSlop={8}><Text style={s.share}>Share</Text></Pressable> : <Text style={s.sub}>local</Text>}
+                </Pressable>
               ))}
 
               <Text style={s.pLabel}>Create</Text>
@@ -206,6 +241,7 @@ export default function App() {
                 <TextInput style={[s.input, { flex: 1 }]} value={newCalName} onChangeText={setNewCalName} placeholder="Name" placeholderTextColor={C.sub} />
                 <Pressable style={s.smBtn} onPress={doCreateCal}><Text style={s.smBtnT}>Add</Text></Pressable>
               </View>
+              <TextInput style={[s.input, { marginTop: 8 }]} value={newCalDesc} onChangeText={setNewCalDesc} placeholder="Description (optional)" placeholderTextColor={C.sub} />
 
               <Text style={s.pLabel}>Join a calendar</Text>
               <View style={s.row}>
@@ -233,6 +269,24 @@ export default function App() {
             </ScrollView>
           </SafeAreaView>
         </Drawer>
+
+        {/* #7: per-calendar settings — shared name/description (cal.meta) + a LOCAL alias. */}
+        <Modal visible={!!calSet} animationType="slide" transparent onRequestClose={() => setCalSet(null)}>
+          <View style={s.sheetBackdrop}>
+            <View style={s.sheet}>
+              <Text style={s.drawerTitle}>Calendar settings</Text>
+              <Text style={s.pLabel}>Name (shared)</Text>
+              <TextInput style={s.input} value={calSet?.name || ""} onChangeText={(t) => setCalSet((v) => v && { ...v, name: t })} placeholderTextColor={C.sub} />
+              <Text style={s.pLabel}>Description (shared)</Text>
+              <TextInput style={[s.input, { height: 64 }]} value={calSet?.desc || ""} onChangeText={(t) => setCalSet((v) => v && { ...v, desc: t })} placeholder="What this calendar is for" placeholderTextColor={C.sub} multiline />
+              <Text style={s.pLabel}>Local alias (only on this phone)</Text>
+              <TextInput style={s.input} value={calSet?.alias || ""} onChangeText={(t) => setCalSet((v) => v && { ...v, alias: t })} placeholder={calSet?.cal.name} placeholderTextColor={C.sub} />
+              {calSet?.cal.rolesConfigured && <Text style={[s.sub, { marginTop: 8 }]}>Your role: {calSet ? roleOf(calSet.cal) : ""}{roleOf(calSet!.cal) === "viewer" ? " — shared edits won't apply" : ""}</Text>}
+              <Pressable style={[s.smBtn, { marginTop: 14, alignItems: "center", backgroundColor: C.accent }]} onPress={saveCalSettings}><Text style={[s.smBtnT, { color: C.bg }]}>Save</Text></Pressable>
+              <Pressable style={[s.smBtn, { marginTop: 8, alignItems: "center", backgroundColor: "transparent" }]} onPress={() => setCalSet(null)}><Text style={[s.smBtnT, { color: C.sub }]}>Cancel</Text></Pressable>
+            </View>
+          </View>
+        </Modal>
 
         <QRModal visible={!!qr} value={qr?.value || ""} title={qr?.title || "Invite"} onClose={() => setQr(null)} />
         <ScanModal visible={scanning} onScanned={onScanned} onClose={() => setScanning(false)} />
@@ -301,6 +355,8 @@ export default function App() {
           onSave={saveEvent}
           onDelete={modal.editing ? removeEvent : undefined}
           onClose={() => setModal((m) => ({ ...m, open: false }))}
+          schema={cals.find((c) => c.id === modal.calId)?.schema || []}
+          loadHistory={modal.editing ? () => getEventHistory(modal.calId, modal.editing!.id) : undefined}
         />
       </SafeAreaView>
     </SafeAreaProvider>
@@ -321,6 +377,9 @@ const s = StyleSheet.create({
   evTitle: { color: C.text, fontSize: 15, fontWeight: "600" },
   sub: { color: C.sub, fontSize: 12 },
   dot: { width: 12, height: 12, borderRadius: 6 },
+  roleBadge: { fontSize: 10, fontWeight: "700", color: "#9399b2", borderColor: "#313244", borderWidth: 1, borderRadius: 6, paddingHorizontal: 5, paddingVertical: 1, overflow: "hidden", textTransform: "uppercase" },
+  sheetBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "flex-end" },
+  sheet: { backgroundColor: "#2a2a3c", borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: "88%" },
   fab: { position: "absolute", right: 20, bottom: 28, width: 60, height: 60, borderRadius: 30, backgroundColor: C.primary, alignItems: "center", justifyContent: "center", elevation: 6 },
   fabT: { color: C.bg, fontSize: 32, fontWeight: "700", marginTop: -2 },
   drawerHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },

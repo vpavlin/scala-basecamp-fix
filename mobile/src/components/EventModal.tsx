@@ -18,12 +18,16 @@ export interface EventDraft {
   startTime: number;
   endTime: number;
   description?: string;
+  fields?: Record<string, any>; // #8: custom schema field values
 }
 
 export interface CalOption { id: string; name: string; color: string }
+export interface FieldDef { key: string; label?: string; type?: string; options?: string[] }
+export interface HistoryEntry { author: string; at: number; action: string; payload: any }
 
 export function EventModal({
   visible, initial, calendars, calendarId, onPickCalendar, canPickCalendar, onSave, onDelete, onClose,
+  schema = [], loadHistory,
 }: {
   visible: boolean;
   initial: EventDraft;
@@ -34,11 +38,15 @@ export function EventModal({
   onSave: (d: EventDraft) => void;
   onDelete?: () => void;
   onClose: () => void;
+  schema?: FieldDef[];           // #8: the calendar's custom-field definitions (empty = none)
+  loadHistory?: () => Promise<HistoryEntry[]>; // #4: async edit-history loader (when editing)
 }) {
   const [title, setTitle] = useState(initial.title);
   const [start, setStart] = useState(new Date(initial.startTime));
   const [end, setEnd] = useState(new Date(initial.endTime));
   const [desc, setDesc] = useState(initial.description || "");
+  const [fields, setFields] = useState<Record<string, any>>(initial.fields || {});
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [pick, setPick] = useState<null | { which: "start" | "end"; mode: "date" | "time" }>(null);
 
   // Re-seed when opened for a different event/day.
@@ -48,8 +56,14 @@ export function EventModal({
       setStart(new Date(initial.startTime));
       setEnd(new Date(initial.endTime));
       setDesc(initial.description || "");
+      setFields(initial.fields || {});
+      setHistory([]);
+      if (initial.id && loadHistory) loadHistory().then(setHistory).catch(() => setHistory([]));
     }
   }, [visible, initial]);
+  const setField = (k: string, v: any) => setFields((f) => ({ ...f, [k]: v }));
+  const fmtWhen = (ms: number) => new Date(ms).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  const shortDev = (d: string) => (d ? d.replace(/^scala-/, "").slice(0, 6) : "?");
 
   const fmtDate = (d: Date) => d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
   const fmtTime = (d: Date) => d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
@@ -72,7 +86,11 @@ export function EventModal({
 
   const save = () => {
     if (!title.trim()) return;
-    onSave({ id: initial.id, title: title.trim(), startTime: start.getTime(), endTime: end.getTime(), description: desc.trim() || undefined });
+    onSave({
+      id: initial.id, title: title.trim(), startTime: start.getTime(), endTime: end.getTime(),
+      description: desc.trim() || undefined,
+      fields: schema.length ? fields : undefined,
+    });
   };
 
   return (
@@ -118,6 +136,36 @@ export function EventModal({
             <Text style={s.label}>Notes</Text>
             <TextInput style={[s.input, { height: 72 }]} value={desc} onChangeText={setDesc} placeholder="Optional" placeholderTextColor={C.sub} multiline />
 
+            {/* #8: custom fields, driven by the calendar's schema. Nothing shows when empty. */}
+            {schema.map((f) => (
+              <View key={f.key}>
+                <Text style={s.label}>{f.label || f.key}</Text>
+                {f.type === "bool" ? (
+                  <Pressable onPress={() => setField(f.key, !fields[f.key])} style={[s.input, { flexDirection: "row", alignItems: "center" }]}>
+                    <Text style={{ color: C.text }}>{fields[f.key] ? "✓ Yes" : "No"}</Text>
+                  </Pressable>
+                ) : f.type === "enum" && Array.isArray(f.options) ? (
+                  <View style={s.calRow}>
+                    {f.options.map((o) => (
+                      <Pressable key={o} onPress={() => setField(f.key, o)} style={[s.calChip, fields[f.key] === o && s.calChipOn]}>
+                        <Text style={[s.calChipT, fields[f.key] === o && { color: C.text }]}>{o}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                ) : (
+                  <TextInput
+                    style={s.input}
+                    value={fields[f.key] != null ? String(fields[f.key]) : ""}
+                    onChangeText={(t) => setField(f.key, f.type === "number" ? (Number(t) || 0) : t)}
+                    keyboardType={f.type === "number" ? "numeric" : "default"}
+                    autoCapitalize={f.type === "url" ? "none" : "sentences"}
+                    placeholder={f.type || "text"}
+                    placeholderTextColor={C.sub}
+                  />
+                )}
+              </View>
+            ))}
+
             {pick && (
               <DateTimePicker
                 value={pick.which === "start" ? start : end}
@@ -136,6 +184,16 @@ export function EventModal({
                 <Text style={[s.btnT, { color: C.danger }]}>Delete event</Text>
               </Pressable>
             )}
+            {/* #4: edit history — who created/edited/deleted this event, and when. */}
+            {initial.id && history.length > 0 && (
+              <View style={{ marginTop: 18 }}>
+                <Text style={s.label}>History</Text>
+                {history.map((h, i) => (
+                  <Text key={i} style={s.histLine}>· {h.action} by {shortDev(h.author)} — {fmtWhen(h.at)}</Text>
+                ))}
+              </View>
+            )}
+
             <Pressable style={[s.btn, { backgroundColor: "transparent" }]} onPress={onClose}>
               <Text style={[s.btnT, { color: C.sub }]}>Cancel</Text>
             </Pressable>
@@ -162,4 +220,5 @@ const s = StyleSheet.create({
   calChipOn: { borderColor: C.primary, backgroundColor: C.surface },
   calChipT: { color: C.sub, fontSize: 13, fontWeight: "600" },
   calDot: { width: 10, height: 10, borderRadius: 5 },
+  histLine: { color: C.sub, fontSize: 12, marginTop: 4 },
 });

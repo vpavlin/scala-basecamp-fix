@@ -26,6 +26,7 @@ export async function getDeviceId(): Promise<string> {
 // ── clock + event construction (mirrors scala_impl.cpp nextHlc / mkEvent) ────
 let clock: Clock | null = null;
 let deviceId = "scala-default";
+export function myDeviceId(): string { return deviceId; }
 // Lazily create the clock, prime it from every calendar's log so we never author
 // an event that sorts before a cause we already hold.
 async function ensureClock(): Promise<Clock> {
@@ -140,13 +141,15 @@ sync.setEventHandler((calendarId, eventJson) => {
 // ── outbound: local edits → append event + publish ──────────────────────────
 // Build an event.put payload from UI fields (never carry calendarId/creatorId —
 // the fold sets those). Mirrors scala_impl.cpp createEvent/updateEvent.
-function putPayload(id: string, f: Partial<CalEvent>): any {
+function putPayload(id: string, f: any): any {
   const p: any = { id };
   if (f.title !== undefined) p.title = f.title;
   if (f.startTime !== undefined) p.startTime = f.startTime;
   if (f.endTime !== undefined) p.endTime = f.endTime;
   if (f.description !== undefined) p.description = f.description;
   if (f.location !== undefined) p.location = f.location;
+  // Custom schema fields (#8) travel under `fields`; the fold passes them through.
+  if (f.fields !== undefined) p.fields = f.fields;
   return p;
 }
 
@@ -206,6 +209,26 @@ export async function updateCalendarMeta(
   }
   await publishAndApply(calId, await mkEvent(ET.CAL_META, p));
   notifyChange();
+}
+
+// Edit history (#4) for one event: the raw EVENT_PUT/EVENT_DEL entries for its id, in
+// time order — who changed it, when, and to what. The fold keeps only the final state,
+// so this reads the raw log. Idempotent duplicates share an id so they collapse.
+export async function getEventHistory(
+  calId: string,
+  eventId: string,
+): Promise<{ author: string; at: number; action: "created" | "edited" | "deleted"; payload: any }[]> {
+  const seen = new Set<string>();
+  const entries = (await store.getLog(calId))
+    .filter((e) => (e.type === ET.EVENT_PUT || e.type === ET.EVENT_DEL) && (e.payload as any)?.id === eventId)
+    .filter((e) => (seen.has(e.id) ? false : (seen.add(e.id), true)))
+    .sort((a, b) => a.hlc.wall - b.hlc.wall || (a.hlc.dev < b.hlc.dev ? -1 : a.hlc.dev > b.hlc.dev ? 1 : 0));
+  return entries.map((e, i) => ({
+    author: e.dev,
+    at: e.hlc.wall,
+    action: e.type === ET.EVENT_DEL ? "deleted" : i === 0 ? "created" : "edited",
+    payload: e.payload,
+  }));
 }
 
 // Device-LOCAL alias (never synced): overrides the display name on THIS phone while the

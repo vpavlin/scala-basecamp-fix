@@ -16,6 +16,12 @@ export interface Calendar {
   creatorId?: string;
   isShared?: boolean;
   encryptionKey?: string; // present iff shared/joined on this device
+  // From the fold (all optional; a plain calendar leaves schema empty / rolesConfigured false):
+  description?: string;
+  schema?: any[]; // custom-field definitions [{key,label,type,options?}]
+  owner?: string; // device id of the creator
+  roles?: Record<string, string>; // deviceId -> "admin"|"viewer"
+  rolesConfigured?: boolean;
 }
 
 export interface CalEvent {
@@ -26,6 +32,7 @@ export interface CalEvent {
   endTime: number; // ms epoch
   description?: string;
   location?: string;
+  fields?: Record<string, any>; // #8: custom schema field values
   creatorId?: string;
   deleted?: boolean; // never set by the fold (tombstoned events are dropped)
 }
@@ -126,6 +133,11 @@ export const store = {
         isShared: r.isShared ?? true,
         creatorId: r.creatorId,
         encryptionKey: r.key,
+        description: f.description,
+        schema: f.schema,
+        owner: f.owner,
+        roles: f.roles,
+        rolesConfigured: f.rolesConfigured,
       });
     }
     return out;
