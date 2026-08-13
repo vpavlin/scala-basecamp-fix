@@ -9,6 +9,8 @@
 
 #include <nlohmann/json.hpp>
 #include "logos_transport.hpp"
+#include "logos_sync/catchup.hpp"   // delta catch-up (buildRequest / answerRequest)
+#include <QTimer>                    // catch-up retry timers (mesh forms ~10s after start)
 
 #include <chrono>
 #include <random>
@@ -133,27 +135,36 @@ void ScalaImpl::applyIncoming(const std::string& calId, const std::string& event
     if (j.is_discarded() || !j.is_object()) return;
     scala::Event e = scala::eventFromJson(j);
     if (e.id.empty()) return;
-    // CATCH-UP: a peer asking for state (SYNC_REQ) — re-serve our log, don't store it.
-    if (e.type == scala::ET::SYNC_REQ) { serveLog(calId); return; }
+    // CATCH-UP: a peer publishing the ids it holds (SYNC_REQ) — serve only the
+    // delta, don't store the request itself.
+    if (e.type == scala::ET::SYNC_REQ) { onSyncReq(calId, e.payload); return; }
     m_store->appendEvent(calId, e);   // idempotent (dedup by id); the view's poll refolds
 }
 
-// Re-broadcast the whole log for a calendar (answers a SYNC_REQ / seeds on connect).
-// Rate-limited per calendar so overlapping requests can't restack into a shard flood
-// (qaku's rule). Idempotent on the receiver — everything dedups by event id.
-void ScalaImpl::serveLog(const std::string& calId) {
+// Answer a peer's SYNC_REQ: send ONLY the events it's missing (logos_sync delta
+// catch-up, replacing the old whole-log re-broadcast). If the requester's summary
+// shows it holds ids WE lack, we fire our own SYNC_REQ so one exchange converges
+// both sides. Rate-limited per calendar so overlapping requests can't flood
+// (logos-sync ADR 0004); receivers dedup by id regardless.
+void ScalaImpl::onSyncReq(const std::string& calId, const json& req) {
+    if (req.value("from", std::string()) == m_identity) return;   // ignore our own echo
     long long now = nowMs();
     auto it = m_lastServe.find(calId);
     if (it != m_lastServe.end() && now - it->second < 3000) return;
     m_lastServe[calId] = now;
-    for (const auto& e : m_store->log(calId))
-        m_sync->sendEvent(calId, scala::eventToJson(e).dump());
+
+    auto ans = logos_sync::catchup::answerRequest(m_store->log(calId), req);
+    for (const auto& ev : ans.serve)
+        m_sync->sendEvent(calId, scala::eventToJson(ev).dump());   // the gap only
+    if (!ans.iLack.empty()) sendSyncReq(calId);                    // we're behind too → pull
 }
 
-// Ask peers to re-serve their log (broadcast a SYNC_REQ on join/connect). The
-// sync.req carries no state and is never stored/folded.
+// Publish a SYNC_REQ carrying the id-summary of what we already hold, so a peer
+// serves only what we're missing (a fresh calendar sends have:[] → gets it all).
 void ScalaImpl::sendSyncReq(const std::string& calId) {
-    scala::Event e = mkEvent(scala::ET::SYNC_REQ, json{{"from", m_identity}});
+    json req = logos_sync::catchup::buildRequest(m_store->log(calId));  // {have:[id…]}
+    req["from"] = m_identity;                                            // for self-ignore
+    scala::Event e = mkEvent(scala::ET::SYNC_REQ, req);
     m_sync->sendEvent(calId, scala::eventToJson(e).dump());
 }
 
@@ -232,9 +243,9 @@ void ScalaImpl::onContextReady() {
               m_sync->handleReceive(topic, sealedOnceDecoded);
           },
           /*onReady*/ [this]{
-              // Node connected: seed every calendar's log for peers already listening,
-              // and ask peers to re-serve theirs so WE catch up (qaku seed + SYNC_REQ).
-              for (const auto& c : m_store->calendars()) { serveLog(c.id); sendSyncReq(c.id); }
+              // Node connected: ask peers what we're missing. No blind whole-log
+              // seed anymore — peers pull the delta via SYNC_REQ (logos-sync ADR 0003).
+              for (const auto& c : m_store->calendars()) sendSyncReq(c.id);
           },
           /*setStatus*/ [this](const std::string& s) { m_deliveryStatus = s; });
 
@@ -246,6 +257,17 @@ void ScalaImpl::onContextReady() {
         if (!c.key.empty()) m_sync->startSync(c.id, c.key);
 
     m_sync->bootstrap();
+
+    // Catch-up retry: start() finishes BEFORE the gossip mesh has peers (~10s to
+    // form) and before the async subscribe/channel-join land, so a single SYNC_REQ
+    // at onReady races into the void (this was the "history never arrives" bug).
+    // Re-request at 3/10/25s (logos-sync ADR 0004). QTimers created here fire on the
+    // module's event-loop thread; sendSyncReq is a no-op until the node is ready.
+    for (int ms : {3000, 10000, 25000})
+        QTimer::singleShot(ms, [this]{
+            if (m_sync && m_sync->ready())
+                for (const auto& c : m_store->calendars()) sendSyncReq(c.id);
+        });
 }
 
 void ScalaImpl::ensureDelivery() { if (m_sync) m_sync->bootstrap(); }

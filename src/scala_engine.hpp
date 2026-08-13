@@ -15,59 +15,35 @@
 #include <algorithm>
 #include <nlohmann/json.hpp>
 
+// The event envelope, HLC and CRDT merge now come from the shared logos-sync
+// library (vendored under logos_sync/) — they were already byte-identical to
+// scala's hand-written copies, so this is a pure de-duplication. What stays
+// scala's: the ET:: event types and foldCalendar below (logos-sync ADR 0007).
+#include "logos_sync/event.hpp"
+#include "logos_sync/merge.hpp"
+
 namespace scala {
 using json = nlohmann::json;
 
-// ── HLC (hybrid logical clock): total order wall → ctr → dev ─────────────────
-struct HLC { long long wall = 0; long long ctr = 0; std::string dev; };
-inline int compareHlc(const HLC& a, const HLC& b) {
-    if (a.wall != b.wall) return a.wall < b.wall ? -1 : 1;
-    if (a.ctr  != b.ctr)  return a.ctr  < b.ctr  ? -1 : 1;
-    if (a.dev  != b.dev)  return a.dev  < b.dev  ? -1 : 1;
-    return 0;
-}
-
-// ── Event: the immutable unit. id (UUIDv4) is the idempotency/dedup key ──────
-struct Event { int v = 1; std::string id; std::string type; HLC hlc; std::string dev; json payload; };
+// Adopt the shared spine into the scala:: namespace so the rest of the module
+// (CalendarSync, ScalaImpl) keeps compiling unchanged against scala::Event etc.
+using logos_sync::HLC;
+using logos_sync::compareHlc;
+using logos_sync::Event;
+using logos_sync::eventToJson;
+using logos_sync::eventFromJson;
+using logos_sync::mergeEvents;
 
 // Event type constants — keep in lockstep with mobile/src/lib/engine.ts.
 namespace ET {
     constexpr const char* CAL_META  = "cal.meta";    // {name,color}          — calendar metadata (LWW)
     constexpr const char* EVENT_PUT = "event.put";   // {id,title,startTime,…}— create/edit an event (LWW upsert by id)
     constexpr const char* EVENT_DEL = "event.del";   // {id}                  — tombstone an event (terminal)
-    constexpr const char* SYNC_REQ  = "sync.req";    // {from}                — CATCH-UP: a joining peer asks everyone to re-serve their log. NOT stored, NOT folded (foldCalendar ignores unknown types); handled in the receive path → serveLog().
+    constexpr const char* SYNC_REQ  = "sync.req";    // {have:[id…], from} — CATCH-UP: a joining peer publishes the ids it already holds; peers serve ONLY the delta (logos_sync::catchup). NOT stored, NOT folded (foldCalendar ignores unknown types); handled in the receive path → onSyncReq().
 }
 
-inline json eventToJson(const Event& e) {
-    return json{{"v", e.v}, {"id", e.id}, {"type", e.type},
-                {"hlc", {{"wall", e.hlc.wall}, {"ctr", e.hlc.ctr}, {"dev", e.hlc.dev}}},
-                {"dev", e.dev}, {"payload", e.payload}};
-}
-inline Event eventFromJson(const json& j) {
-    Event e;
-    e.v = j.value("v", 1);
-    e.id = j.value("id", std::string());
-    e.type = j.value("type", std::string());
-    if (j.contains("hlc") && j["hlc"].is_object()) {
-        e.hlc.wall = j["hlc"].value("wall", 0LL);
-        e.hlc.ctr  = j["hlc"].value("ctr", 0LL);
-        e.hlc.dev  = j["hlc"].value("dev", std::string());
-    }
-    e.dev = j.value("dev", std::string());
-    e.payload = j.contains("payload") ? j["payload"] : json::object();
-    return e;
-}
-
-// Union by id, sort by HLC. Idempotent — redelivery is a no-op. Pure.
-inline std::vector<Event> mergeEvents(const std::vector<Event>& a, const std::vector<Event>& b = {}) {
-    std::map<std::string, Event> byId;
-    for (const auto& e : a) if (!e.id.empty()) byId.emplace(e.id, e);
-    for (const auto& e : b) if (!e.id.empty()) byId.emplace(e.id, e);
-    std::vector<Event> out; out.reserve(byId.size());
-    for (auto& kv : byId) out.push_back(kv.second);
-    std::sort(out.begin(), out.end(), [](const Event& x, const Event& y){ return compareHlc(x.hlc, y.hlc) < 0; });
-    return out;
-}
+// eventToJson / eventFromJson / mergeEvents now come from logos_sync (aliased
+// above) — they were byte-identical to the copies that used to live here.
 
 // ── fold: merged log → calendar state ────────────────────────────────────────
 // Returns {name, color, events:[…]}. cal.meta is LWW (last by HLC wins). Events are
