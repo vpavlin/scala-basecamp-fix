@@ -37,6 +37,7 @@ export const ET = {
   CAL_META: "cal.meta", // {name,color}           — calendar metadata (LWW)
   EVENT_PUT: "event.put", // {id,title,startTime,…} — create/edit an event (LWW upsert by id)
   EVENT_DEL: "event.del", // {id}                   — tombstone an event (terminal)
+  MEMBER_SET: "member.set", // {member,role}        — roles (#3): owner/admin grants admin|viewer|remove; opt-in
   SYNC_REQ: "sync.req", // {from}                  — catch-up: ask peers to re-serve; NOT stored/folded
 } as const;
 
@@ -81,6 +82,9 @@ export interface FoldedCalendar {
   color: string;
   description: string;
   schema: any[];
+  owner: string;
+  roles: Record<string, string>;
+  rolesConfigured: boolean;
   events: any[];
 }
 
@@ -93,24 +97,45 @@ export function foldCalendar(calId: string, log: Event[]): FoldedCalendar {
   let name = "";
   let color = "";
   let description = "";
+  let owner = "";
   let schema: any[] = []; // OPTIONAL custom-field defs; empty by default (plain calendar)
   const events = new Map<string, any>(); // event id -> payload
   const tombstones = new Set<string>();
 
+  // Roles (#3), opt-in + default-open — parity with scala_engine.hpp. owner = author of
+  // the earliest cal.meta; until the first member.set the calendar is OPEN (anyone with
+  // the key writes). Once configured, only owner/admins write. Single HLC-ordered pass.
+  const roleOf = new Map<string, string>(); // dev -> "admin"|"viewer"
+  let rolesConfigured = false;
+  const canWrite = (dev: string): boolean =>
+    !rolesConfigured || dev === owner || roleOf.get(dev) === "admin";
+
   for (const e of ordered) {
+    const author = e.dev;
     if (e.type === ET.CAL_META) {
-      // LWW per field; `schema` is replaced whole by the latest writer.
+      if (!owner) owner = author; // creator = first cal.meta author
+      if (!canWrite(author)) continue;
       const p: any = e.payload;
       if (Object.prototype.hasOwnProperty.call(p, "name")) name = p.name ?? name;
       if (Object.prototype.hasOwnProperty.call(p, "color")) color = p.color ?? color;
       if (Object.prototype.hasOwnProperty.call(p, "description")) description = p.description ?? description;
       if (Array.isArray(p.schema)) schema = p.schema;
+    } else if (e.type === ET.MEMBER_SET) {
+      if (!owner || !(author === owner || roleOf.get(author) === "admin")) continue;
+      const m: string = (e.payload as any)?.member ?? "";
+      const r: string = (e.payload as any)?.role ?? "";
+      if (!m || m === owner) continue; // owner role is fixed
+      rolesConfigured = true;
+      if (r === "remove") roleOf.delete(m);
+      else if (r === "admin" || r === "viewer") roleOf.set(m, r);
     } else if (e.type === ET.EVENT_PUT) {
+      if (!canWrite(author)) continue; // viewer edits dropped
       const id: string = e.payload?.id ?? "";
       if (!id || tombstones.has(id)) continue; // tombstone terminal
       const ev = { ...e.payload, calendarId: calId, creatorId: e.dev };
       events.set(id, ev);
     } else if (e.type === ET.EVENT_DEL) {
+      if (!canWrite(author)) continue;
       const id: string = e.payload?.id ?? "";
       if (id) {
         tombstones.add(id);
@@ -121,7 +146,9 @@ export function foldCalendar(calId: string, log: Event[]): FoldedCalendar {
 
   // Match C++ std::map iteration: events ordered by id string.
   const ids = [...events.keys()].sort();
-  return { id: calId, name, color, description, schema, events: ids.map((id) => events.get(id)) };
+  const roles: Record<string, string> = {};
+  [...roleOf.keys()].sort().forEach((k) => (roles[k] = roleOf.get(k)!));
+  return { id: calId, name, color, description, schema, owner, roles, rolesConfigured, events: ids.map((id) => events.get(id)) };
 }
 
 // ── Clock: stamps local events, advances past ingested causes ────────────────
