@@ -196,12 +196,13 @@ export async function createCalendar(name: string, color = "#89b4fa", descriptio
 // travel in the event log to every device. Only the changed fields are written.
 export async function updateCalendarMeta(
   calId: string,
-  fields: { name?: string; color?: string; description?: string },
+  fields: { name?: string; color?: string; description?: string; schema?: any[] },
 ): Promise<void> {
   const p: any = {};
   if (fields.name !== undefined) p.name = fields.name.trim();
   if (fields.color !== undefined) p.color = fields.color;
   if (fields.description !== undefined) p.description = fields.description.trim();
+  if (fields.schema !== undefined) p.schema = fields.schema;
   if (Object.keys(p).length === 0) return;
   if (p.name !== undefined || p.color !== undefined) {
     const reg = (await store.getRegistry()).find((r) => r.id === calId);
@@ -229,6 +230,13 @@ export async function getEventHistory(
     action: e.type === ET.EVENT_DEL ? "deleted" : i === 0 ? "created" : "edited",
     payload: e.payload,
   }));
+}
+
+// Roles (#3): grant/revoke a member by their device id (owner/admin only — the fold
+// enforces it). role "remove" clears the grant. Writes a member.set event.
+export async function setMemberRole(calId: string, member: string, role: "admin" | "viewer" | "remove"): Promise<void> {
+  await publishAndApply(calId, await mkEvent(ET.MEMBER_SET, { member, role }));
+  notifyChange();
 }
 
 // Device-LOCAL alias (never synced): overrides the display name on THIS phone while the

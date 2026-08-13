@@ -2,7 +2,7 @@
 // time, description, with native date/time pickers. Delete when editing.
 import React, { useState } from "react";
 import {
-  Modal, View, Text, TextInput, Pressable, ScrollView, Platform, StyleSheet,
+  Modal, View, Text, TextInput, Pressable, ScrollView, Platform, StyleSheet, KeyboardAvoidingView,
 } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { CalEvent } from "../lib/store";
@@ -48,6 +48,8 @@ export function EventModal({
   const [fields, setFields] = useState<Record<string, any>>(initial.fields || {});
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [pick, setPick] = useState<null | { which: "start" | "end"; mode: "date" | "time" }>(null);
+  const [calOpen, setCalOpen] = useState(false); // #6: select-box dropdown open?
+  const selCal = calendars.find((c) => c.id === calendarId);
 
   // Re-seed when opened for a different event/day.
   React.useEffect(() => {
@@ -95,28 +97,38 @@ export function EventModal({
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={s.backdrop}>
+      <KeyboardAvoidingView style={s.backdrop} behavior={Platform.OS === "ios" ? "padding" : "height"}>
         <View style={s.sheet}>
           <ScrollView keyboardShouldPersistTaps="handled">
             <Text style={s.h}>{initial.id ? "Edit event" : "New event"}</Text>
 
+            {/* #6: calendar picker as a select box (dropdown) — handles long names. */}
             <Text style={s.label}>Calendar</Text>
-            <View style={s.calRow}>
-              {calendars.map((c) => {
-                const on = c.id === calendarId;
-                return (
-                  <Pressable
-                    key={c.id}
-                    disabled={!canPickCalendar}
-                    onPress={() => onPickCalendar(c.id)}
-                    style={[s.calChip, on && s.calChipOn, !canPickCalendar && !on && { opacity: 0.4 }]}
-                  >
-                    <View style={[s.calDot, { backgroundColor: c.color }]} />
-                    <Text style={[s.calChipT, on && { color: C.text }]}>{c.name}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
+            {canPickCalendar ? (
+              <>
+                <Pressable style={s.select} onPress={() => setCalOpen((o) => !o)}>
+                  <View style={[s.calDot, { backgroundColor: selCal?.color || C.border }]} />
+                  <Text style={s.selectT} numberOfLines={1}>{selCal?.name || "Select a calendar"}</Text>
+                  <Text style={s.caret}>{calOpen ? "▲" : "▼"}</Text>
+                </Pressable>
+                {calOpen && (
+                  <View style={s.selectList}>
+                    {calendars.map((c) => (
+                      <Pressable key={c.id} style={s.selectItem} onPress={() => { onPickCalendar(c.id); setCalOpen(false); }}>
+                        <View style={[s.calDot, { backgroundColor: c.color }]} />
+                        <Text style={[s.selectItemT, c.id === calendarId && { color: C.text, fontWeight: "700" }]} numberOfLines={1}>{c.name}</Text>
+                        {c.id === calendarId && <Text style={{ color: C.primary }}>✓</Text>}
+                      </Pressable>
+                    ))}
+                  </View>
+                )}
+              </>
+            ) : (
+              <View style={s.select}>
+                <View style={[s.calDot, { backgroundColor: selCal?.color || C.border }]} />
+                <Text style={s.selectT} numberOfLines={1}>{selCal?.name || ""}</Text>
+              </View>
+            )}
 
             <Text style={s.label}>Title</Text>
             <TextInput style={s.input} value={title} onChangeText={setTitle} placeholder="Event title" placeholderTextColor={C.sub} autoFocus={!initial.id} />
@@ -199,7 +211,7 @@ export function EventModal({
             </Pressable>
           </ScrollView>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -215,6 +227,12 @@ const s = StyleSheet.create({
   pillT: { color: C.text, fontSize: 14, fontWeight: "600" },
   btn: { borderRadius: 10, paddingVertical: 13, alignItems: "center", marginTop: 12 },
   btnT: { fontSize: 15, fontWeight: "700" },
+  select: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: C.bg, borderRadius: 8, borderWidth: 1, borderColor: C.border, paddingHorizontal: 12, paddingVertical: 12 },
+  selectT: { flex: 1, color: C.text, fontSize: 14, fontWeight: "600" },
+  caret: { color: C.sub, fontSize: 12 },
+  selectList: { marginTop: 4, backgroundColor: C.bg, borderRadius: 8, borderWidth: 1, borderColor: C.border, overflow: "hidden" },
+  selectItem: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingVertical: 12, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: C.border },
+  selectItemT: { flex: 1, color: C.sub, fontSize: 14 },
   calRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   calChip: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: C.bg, borderRadius: 999, borderWidth: 1, borderColor: C.border, paddingHorizontal: 12, paddingVertical: 7 },
   calChipOn: { borderColor: C.primary, backgroundColor: C.surface },

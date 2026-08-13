@@ -2,7 +2,7 @@
 // Month grid + day detail + event editor; calendars live in a left drawer.
 import React, { useEffect, useState, useCallback, useMemo } from "react";
 import {
-  View, Text, TextInput, Pressable, Switch, ScrollView, StyleSheet, Alert, Modal,
+  View, Text, TextInput, Pressable, Switch, ScrollView, StyleSheet, Alert, Modal, KeyboardAvoidingView, Platform,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
@@ -10,8 +10,11 @@ import { store, Calendar, CalEvent, colorForId } from "./src/lib/store";
 import {
   onChange, startSyncing, joinFromInvite, createEvent, updateEvent, deleteEvent,
   createCalendar, buildInvite, getSharedNode, setSharedNode,
-  updateCalendarMeta, getAlias, setAlias, getEventHistory, myDeviceId,
+  updateCalendarMeta, getAlias, setAlias, getEventHistory, myDeviceId, setMemberRole,
 } from "./src/lib/calendar";
+import { FieldDef } from "./src/components/EventModal";
+
+const FIELD_TYPES = ["text", "longtext", "number", "date", "datetime", "bool", "url", "enum", "color"];
 import { deliveryAvailable, getDebug, refreshDebug } from "./src/lib/scala-sync";
 import { MonthGrid } from "./src/components/MonthGrid";
 import { EventModal, EventDraft } from "./src/components/EventModal";
@@ -50,7 +53,9 @@ export default function App() {
   const [newCalDesc, setNewCalDesc] = useState("");
   const [currentCalId, setCurrentCalId] = useState<string>("");     // #5: last-tapped calendar (preselected for new events)
   const [aliasMap, setAliasMap] = useState<Record<string, string>>({}); // #7: device-local name overrides
-  const [calSet, setCalSet] = useState<{ cal: Calendar; name: string; desc: string; alias: string } | null>(null); // #7 settings sheet
+  const [calSet, setCalSet] = useState<{ cal: Calendar; name: string; desc: string; alias: string; schema: FieldDef[] } | null>(null); // #7 settings sheet
+  const [nf, setNf] = useState<{ key: string; label: string; type: string }>({ key: "", label: "", type: "text" }); // #8 new custom field
+  const [nm, setNm] = useState<{ id: string; role: "admin" | "viewer" }>({ id: "", role: "admin" }); // #3 new member
   const [invite, setInvite] = useState("");
   const [lastInvite, setLastInvite] = useState("");
   const [qr, setQr] = useState<{ value: string; title: string } | null>(null);
@@ -92,14 +97,47 @@ export default function App() {
     if (c.owner && c.owner === me) return "owner";
     return c.roles?.[me] || "viewer";
   }, [me]);
-  const openCalSettings = (c: Calendar) => setCalSet({ cal: c, name: c.name, desc: c.description || "", alias: aliasMap[c.id] || "" });
+  const openCalSettings = (c: Calendar) => {
+    setNf({ key: "", label: "", type: "text" }); setNm({ id: "", role: "admin" });
+    setCalSet({ cal: c, name: c.name, desc: c.description || "", alias: aliasMap[c.id] || "", schema: c.schema ? [...c.schema] : [] });
+  };
   const saveCalSettings = async () => {
     if (!calSet) return;
     if (calSet.name.trim() && calSet.name !== calSet.cal.name) await updateCalendarMeta(calSet.cal.id, { name: calSet.name });
     if ((calSet.desc || "") !== (calSet.cal.description || "")) await updateCalendarMeta(calSet.cal.id, { description: calSet.desc });
+    if (JSON.stringify(calSet.schema) !== JSON.stringify(calSet.cal.schema || [])) await updateCalendarMeta(calSet.cal.id, { schema: calSet.schema });
     await setAlias(calSet.cal.id, calSet.alias);
     setCalSet(null);
   };
+  // #8: custom-field schema editing (staged in calSet, written on Save).
+  const addField = () => {
+    const key = nf.key.trim().replace(/\s+/g, "_");
+    if (!key || !calSet) return;
+    if (calSet.schema.some((f) => f.key === key)) { Alert.alert("Field exists", `"${key}" is already defined.`); return; }
+    setCalSet((v) => v && { ...v, schema: [...v.schema, { key, label: nf.label.trim() || key, type: nf.type }] });
+    setNf({ key: "", label: "", type: "text" });
+  };
+  const removeField = (key: string) => setCalSet((v) => v && { ...v, schema: v.schema.filter((f) => f.key !== key) });
+  // #3: role management — writes a member.set event immediately (owner/admin only; the fold enforces it).
+  const canManage = !!calSet && (calSet.cal.owner === me || calSet.cal.roles?.[me] === "admin");
+  const members: [string, string][] = calSet
+    ? [...(calSet.cal.owner ? [[calSet.cal.owner, "owner"] as [string, string]] : []),
+       ...Object.entries(calSet.cal.roles || {}).filter(([id]) => id !== calSet.cal.owner)]
+    : [];
+  const addMember = async () => {
+    const id = nm.id.trim();
+    if (!id || !calSet) return;
+    await setMemberRole(calSet.cal.id, id, nm.role);
+    setNm({ id: "", role: "admin" });
+    Alert.alert("Member added", `${id.slice(0, 16)}… is now ${nm.role}. They'll appear once the change syncs.`);
+    setCalSet(null);
+  };
+  const removeMember = async (id: string) => {
+    if (!calSet) return;
+    await setMemberRole(calSet.cal.id, id, "remove");
+    setCalSet(null);
+  };
+  const copyIdentity = async () => { await Clipboard.setStringAsync(me); Alert.alert("Copied", "Your identity is on the clipboard — share it so an owner can add you."); };
   const colorFor = useCallback((id: string) => colorForId(id), []);
   const dayEvents = useMemo(
     () => events.filter((e) => sameDay(new Date(e.startTime), selected)).sort((a, b) => a.startTime - b.startTime),
@@ -272,20 +310,83 @@ export default function App() {
 
         {/* #7: per-calendar settings — shared name/description (cal.meta) + a LOCAL alias. */}
         <Modal visible={!!calSet} animationType="slide" transparent onRequestClose={() => setCalSet(null)}>
-          <View style={s.sheetBackdrop}>
+          <KeyboardAvoidingView style={s.sheetBackdrop} behavior={Platform.OS === "ios" ? "padding" : "height"}>
             <View style={s.sheet}>
-              <Text style={s.drawerTitle}>Calendar settings</Text>
-              <Text style={s.pLabel}>Name (shared)</Text>
-              <TextInput style={s.input} value={calSet?.name || ""} onChangeText={(t) => setCalSet((v) => v && { ...v, name: t })} placeholderTextColor={C.sub} />
-              <Text style={s.pLabel}>Description (shared)</Text>
-              <TextInput style={[s.input, { height: 64 }]} value={calSet?.desc || ""} onChangeText={(t) => setCalSet((v) => v && { ...v, desc: t })} placeholder="What this calendar is for" placeholderTextColor={C.sub} multiline />
-              <Text style={s.pLabel}>Local alias (only on this phone)</Text>
-              <TextInput style={s.input} value={calSet?.alias || ""} onChangeText={(t) => setCalSet((v) => v && { ...v, alias: t })} placeholder={calSet?.cal.name} placeholderTextColor={C.sub} />
-              {calSet?.cal.rolesConfigured && <Text style={[s.sub, { marginTop: 8 }]}>Your role: {calSet ? roleOf(calSet.cal) : ""}{roleOf(calSet!.cal) === "viewer" ? " — shared edits won't apply" : ""}</Text>}
-              <Pressable style={[s.smBtn, { marginTop: 14, alignItems: "center", backgroundColor: C.accent }]} onPress={saveCalSettings}><Text style={[s.smBtnT, { color: C.bg }]}>Save</Text></Pressable>
-              <Pressable style={[s.smBtn, { marginTop: 8, alignItems: "center", backgroundColor: "transparent" }]} onPress={() => setCalSet(null)}><Text style={[s.smBtnT, { color: C.sub }]}>Cancel</Text></Pressable>
+              <ScrollView keyboardShouldPersistTaps="handled">
+                <Text style={s.drawerTitle}>Calendar settings</Text>
+                <Text style={s.pLabel}>Name (shared)</Text>
+                <TextInput style={s.input} value={calSet?.name || ""} onChangeText={(t) => setCalSet((v) => v && { ...v, name: t })} placeholderTextColor={C.sub} />
+                <Text style={s.pLabel}>Description (shared)</Text>
+                <TextInput style={[s.input, { height: 64 }]} value={calSet?.desc || ""} onChangeText={(t) => setCalSet((v) => v && { ...v, desc: t })} placeholder="What this calendar is for" placeholderTextColor={C.sub} multiline />
+                <Text style={s.pLabel}>Local alias (only on this phone)</Text>
+                <TextInput style={s.input} value={calSet?.alias || ""} onChangeText={(t) => setCalSet((v) => v && { ...v, alias: t })} placeholder={calSet?.cal.name} placeholderTextColor={C.sub} />
+
+                {/* #8: custom fields — define the calendar's schema (empty = a plain calendar). */}
+                <Text style={s.pLabel}>Custom fields</Text>
+                {calSet?.schema.length === 0 && <Text style={[s.sub, { marginBottom: 6 }]}>None — a plain calendar. Add fields to capture more per event.</Text>}
+                {calSet?.schema.map((f) => (
+                  <View key={f.key} style={s.fieldRow}>
+                    <Text style={{ color: C.text, flex: 1 }}>{f.label || f.key} <Text style={{ color: C.sub, fontSize: 12 }}>· {f.type}</Text></Text>
+                    <Pressable onPress={() => removeField(f.key)} hitSlop={8}><Text style={{ color: C.danger, fontSize: 18 }}>×</Text></Pressable>
+                  </View>
+                ))}
+                <View style={s.row2}>
+                  <TextInput style={[s.input, { flex: 1 }]} value={nf.key} onChangeText={(t) => setNf((v) => ({ ...v, key: t }))} placeholder="key" placeholderTextColor={C.sub} autoCapitalize="none" />
+                  <TextInput style={[s.input, { flex: 1 }]} value={nf.label} onChangeText={(t) => setNf((v) => ({ ...v, label: t }))} placeholder="Label" placeholderTextColor={C.sub} />
+                </View>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 6 }}>
+                  <View style={{ flexDirection: "row", gap: 6 }}>
+                    {FIELD_TYPES.map((t) => (
+                      <Pressable key={t} onPress={() => setNf((v) => ({ ...v, type: t }))} style={[s.typeChip, nf.type === t && s.typeChipOn]}>
+                        <Text style={[s.typeChipT, nf.type === t && { color: C.bg }]}>{t}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </ScrollView>
+                <Pressable style={[s.smBtn, { marginTop: 8, alignItems: "center", backgroundColor: C.surface, borderWidth: 1, borderColor: C.border }]} onPress={addField}><Text style={[s.smBtnT, { color: C.text }]}>+ Add field</Text></Pressable>
+
+                {/* #3: sharing & roles — who can edit. Identity = a device id; share yours to be added. */}
+                <Text style={s.pLabel}>Sharing &amp; roles</Text>
+                <Text style={[s.sub, { marginBottom: 6 }]}>
+                  {calSet?.cal.rolesConfigured
+                    ? `Role-managed. Your role: ${calSet ? roleOf(calSet.cal) : ""}${roleOf(calSet!.cal) === "viewer" ? " — your shared edits won't apply." : "."}`
+                    : "Open — anyone with the invite link can edit. Add a member below to make it role-managed (owner sets admins; others become viewers)."}
+                </Text>
+                <View style={[s.fieldRow, { backgroundColor: C.bg, borderRadius: 8, borderWidth: 1, borderColor: C.border, paddingHorizontal: 10 }]}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: C.sub, fontSize: 11 }}>Your identity (share this to be added)</Text>
+                    <Text style={{ color: C.text, fontFamily: "monospace", fontSize: 12 }} numberOfLines={1}>{me}</Text>
+                  </View>
+                  <Pressable onPress={copyIdentity} hitSlop={8}><Text style={{ color: C.primary, fontWeight: "700" }}>Copy</Text></Pressable>
+                </View>
+                {members.map(([id, role]) => (
+                  <View key={id} style={s.fieldRow}>
+                    <Text style={{ color: C.text, flex: 1, fontFamily: "monospace", fontSize: 12 }} numberOfLines={1}>
+                      {id === me ? "you" : id.replace(/^scala-/, "").slice(0, 12)} <Text style={{ color: C.sub }}>· {role}</Text>
+                    </Text>
+                    {canManage && role !== "owner" && <Pressable onPress={() => removeMember(id)} hitSlop={8}><Text style={{ color: C.danger, fontSize: 18 }}>×</Text></Pressable>}
+                  </View>
+                ))}
+                {canManage && (
+                  <>
+                    <TextInput style={[s.input, { marginTop: 6 }]} value={nm.id} onChangeText={(t) => setNm((v) => ({ ...v, id: t }))} placeholder="Paste a member's identity" placeholderTextColor={C.sub} autoCapitalize="none" />
+                    <View style={[s.row2, { marginTop: 6, alignItems: "center" }]}>
+                      {(["admin", "viewer"] as const).map((r) => (
+                        <Pressable key={r} onPress={() => setNm((v) => ({ ...v, role: r }))} style={[s.typeChip, nm.role === r && s.typeChipOn]}>
+                          <Text style={[s.typeChipT, nm.role === r && { color: C.bg }]}>{r}</Text>
+                        </Pressable>
+                      ))}
+                      <Pressable style={[s.smBtn, { flex: 1, alignItems: "center", backgroundColor: C.accent }]} onPress={addMember}><Text style={[s.smBtnT, { color: C.bg }]}>Add member</Text></Pressable>
+                    </View>
+                  </>
+                )}
+
+                <Pressable style={[s.smBtn, { marginTop: 18, alignItems: "center", backgroundColor: C.accent }]} onPress={saveCalSettings}><Text style={[s.smBtnT, { color: C.bg }]}>Save</Text></Pressable>
+                <Pressable style={[s.smBtn, { marginTop: 8, alignItems: "center", backgroundColor: "transparent" }]} onPress={() => setCalSet(null)}><Text style={[s.smBtnT, { color: C.sub }]}>Cancel</Text></Pressable>
+                <View style={{ height: 20 }} />
+              </ScrollView>
             </View>
-          </View>
+          </KeyboardAvoidingView>
         </Modal>
 
         <QRModal visible={!!qr} value={qr?.value || ""} title={qr?.title || "Invite"} onClose={() => setQr(null)} />
@@ -388,6 +489,11 @@ const s = StyleSheet.create({
   rowBetween: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 8 },
   row: { flexDirection: "row", gap: 8, alignItems: "center" },
   pLabel: { color: C.text, fontSize: 13, fontWeight: "700", marginTop: 18, marginBottom: 6 },
+  fieldRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8 },
+  row2: { flexDirection: "row", gap: 8 },
+  typeChip: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.border, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 7 },
+  typeChipOn: { backgroundColor: C.primary, borderColor: C.primary },
+  typeChipT: { color: C.sub, fontSize: 12, fontWeight: "600" },
   calRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8 },
   calName: { color: C.text, fontSize: 15, flex: 1 },
   share: { color: C.primary, fontSize: 13, fontWeight: "600" },
