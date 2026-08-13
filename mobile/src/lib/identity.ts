@@ -12,8 +12,12 @@
 // The private key never leaves the device (SecureStore).
 import * as SecureStore from "expo-secure-store";
 import * as Crypto from "expo-crypto";
-import { secp256k1 } from "@noble/curves/secp256k1.js";
-import { sha256 } from "@noble/hashes/sha2.js";
+// @noble/curves v1.x — the exact stack qaku proved on Hermes. v1 `sign()` signs the hash
+// directly (no prehash) and returns a Signature (`.toCompactHex()`); it cross-verifies with
+// the desktop OpenSSL core. (v2 needs `{prehash:false}` AND misbehaves on Hermes — that
+// was the "events don't save" bug.)
+import { secp256k1 } from "@noble/curves/secp256k1";
+import { sha256 } from "@noble/hashes/sha256";
 import { utf8Bytes } from "./utf8";
 
 const HEXC = "0123456789abcdef";
@@ -74,11 +78,9 @@ export function signEvent(id: Identity, ev: any): any {
   ev.dev = id.address;
   if (ev.hlc) ev.hlc.dev = id.address;
   const digest = sha256(utf8Bytes(canonicalMessage(ev)));
-  // prehash:false — sign the digest AS-IS (OpenSSL ECDSA_do_sign does the same). @noble v2
-  // otherwise hashes the input again, which would not cross-verify with the desktop core.
-  const sig = secp256k1.sign(digest, id.priv, { prehash: false }); // Uint8Array(64), low-S
+  const sig = secp256k1.sign(digest, id.priv); // v1 Signature, low-S, RFC6979 deterministic
   ev.pub = id.pubHex;
-  ev.sig = hex(sig);
+  ev.sig = sig.toCompactHex(); // 64B compact r‖s hex — OpenSSL-compatible
   return ev;
 }
 
@@ -92,7 +94,7 @@ export function verifyEvent(ev: any): boolean {
     if (pub.length !== 33) return false;
     if (addressFor(pub) !== dev) return false;
     const digest = sha256(utf8Bytes(canonicalMessage(ev)));
-    return secp256k1.verify(fromHex(ev.sig), digest, pub, { prehash: false });
+    return secp256k1.verify(fromHex(ev.sig), digest, pub);
   } catch {
     return false;
   }

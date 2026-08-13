@@ -9,7 +9,7 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { store, Calendar, CalEvent, colorForId } from "./src/lib/store";
 import {
   onChange, startSyncing, joinFromInvite, createEvent, updateEvent, deleteEvent,
-  createCalendar, buildInvite, getSharedNode, setSharedNode,
+  createCalendar, deleteCalendar, buildInvite, getSharedNode, setSharedNode,
   updateCalendarMeta, getAlias, setAlias, getEventHistory, getDeviceId, setMemberRole,
 } from "./src/lib/calendar";
 import { FieldDef } from "./src/components/EventModal";
@@ -146,6 +146,22 @@ export default function App() {
     setCalSet(null);
   };
   const copyIdentity = async () => { await Clipboard.setStringAsync(me); Alert.alert("Copied", "Your identity is on the clipboard — share it so an owner can add you."); };
+  const removeCalendar = () => {
+    if (!calSet) return;
+    const c = calSet.cal;
+    Alert.alert(
+      "Delete calendar",
+      `Remove "${displayName(c)}" from this device? A shared calendar can't be deleted for others — this just stops it syncing here. You can rejoin with the invite link.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Delete", style: "destructive", onPress: async () => {
+          if (currentCalId === c.id) setCurrentCalId("");
+          setCalSet(null);
+          await deleteCalendar(c.id);
+        } },
+      ],
+    );
+  };
   const colorFor = useCallback((id: string) => colorForId(id), []);
   // Expand recurrence occurrences for the selected day (non-recurring events pass through once).
   const dayEvents = useMemo(() => {
@@ -417,6 +433,7 @@ export default function App() {
 
                 <Pressable style={[s.smBtn, { marginTop: 18, alignItems: "center", backgroundColor: C.accent }]} onPress={saveCalSettings}><Text style={[s.smBtnT, { color: C.bg }]}>Save</Text></Pressable>
                 <Pressable style={[s.smBtn, { marginTop: 8, alignItems: "center", backgroundColor: "transparent" }]} onPress={() => setCalSet(null)}><Text style={[s.smBtnT, { color: C.sub }]}>Cancel</Text></Pressable>
+                <Pressable style={[s.smBtn, { marginTop: 8, alignItems: "center", backgroundColor: "transparent", borderWidth: 1, borderColor: C.danger }]} onPress={removeCalendar}><Text style={[s.smBtnT, { color: C.danger }]}>Delete calendar</Text></Pressable>
                 <View style={{ height: 20 }} />
               </ScrollView>
             </View>

@@ -3,14 +3,14 @@
     "name": "Scala",
     "slug": "scala",
     "scheme": "scala",
-    "version": "0.8.0",
+    "version": "0.8.1",
     "platforms": [
       "android"
     ],
     "icon": "./assets/icon.png",
     "android": {
       "package": "xyz.vpavlin.scala",
-      "versionCode": 19
+      "versionCode": 20
     },
     "plugins": [
       "./plugins/withLogosDelivery",

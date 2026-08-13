@@ -38,7 +38,9 @@ async function ensureClock(): Promise<Clock> {
 async function mkEvent(type: string, payload: any): Promise<Event> {
   const c = await ensureClock();
   const e: Event = { v: 1, id: Crypto.randomUUID(), type, hlc: c.send(Date.now()), dev: deviceId, payload };
-  return signEvent(await getIdentity(), e) as Event; // authenticity: sign as our address
+  // Authenticity: sign as our address. NEVER lose an authored event to a signing error —
+  // if it throws, author it unsigned (legacy → still admitted on open calendars).
+  try { return signEvent(await getIdentity(), e) as Event; } catch { return e; }
 }
 // Append locally (persist FIRST — the authored event has no other copy until it's
 // both on disk and on the wire), then broadcast the raw event JSON.
@@ -193,6 +195,13 @@ export async function createCalendar(name: string, color = "#89b4fa", descriptio
   await publishAndApply(id, await mkEvent(ET.CAL_META, meta));
   notifyChange();
   return { id, name: nm, color, isShared: true, encryptionKey, creatorId: deviceId };
+}
+
+// Remove a calendar from THIS device. A shared p2p calendar can't be deleted for peers —
+// this forgets our local copy + membership (registry + event log) so it stops syncing here.
+export async function deleteCalendar(calId: string): Promise<void> {
+  await store.removeCalendar(calId);
+  notifyChange();
 }
 
 // Edit a calendar's SHARED metadata (cal.meta, LWW per field) — name/color/description
