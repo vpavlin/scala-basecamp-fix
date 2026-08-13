@@ -65,6 +65,7 @@ Item {
         onTriggered: {
             if (!root.ready) return
             root.refresh()
+            root.computeSoon()
             if (diagPopup.visible) root.diag = root.j(root.core("diagnostics", []), null)
         }
     }
@@ -117,21 +118,73 @@ Item {
     function sameDay(a, b) {
         return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
     }
-    function eventsOnDay(d) {
+    // Events filtered by the active calendar filter (null-safe on old events).
+    function eventsFiltered() {
+        if (filterCalId === "") return events
         var out = []
-        for (var i = 0; i < events.length; i++) {
-            if (filterCalId !== "" && events[i].calendarId !== filterCalId) continue
-            if (sameDay(new Date(events[i].startTime), d)) out.push(events[i])
+        for (var i = 0; i < events.length; i++) if (events[i].calendarId === filterCalId) out.push(events[i])
+        return out
+    }
+    // Look up a master event by id (recurrence edits operate on the master).
+    function eventById(id) {
+        for (var i = 0; i < events.length; i++) if (events[i].id === id) return events[i]
+        return null
+    }
+
+    // ── recurrence expansion (identical algorithm to the mobile app) ───────────
+    function expandEvent(ev, winStart, winEnd) {
+        var dur = Math.max(0, (ev.endTime || ev.startTime) - ev.startTime);
+        var r = ev.recur;
+        function mk(s){ var o={}; for (var k in ev) o[k]=ev[k]; o.startTime=s; o.endTime=s+dur; o.seriesId=ev.id; o.occ=s; return o; }
+        if (!r || !r.freq) return (ev.startTime+dur>=winStart && ev.startTime<=winEnd) ? [mk(ev.startTime)] : [];
+        var interval = Math.max(1, Math.floor(r.interval||1));
+        var hardUntil = (typeof r.until === "number") ? r.until : Infinity;
+        var out=[]; var cur=new Date(ev.startTime);
+        for (var i=0;i<500;i++){
+            var s=cur.getTime();
+            if (s>hardUntil || s>winEnd) break;
+            if (s+dur>=winStart) out.push(mk(s));
+            if (r.freq==="daily") cur.setDate(cur.getDate()+interval);
+            else if (r.freq==="weekly") cur.setDate(cur.getDate()+7*interval);
+            else if (r.freq==="monthly") cur.setMonth(cur.getMonth()+interval);
+            else if (r.freq==="yearly") cur.setFullYear(cur.getFullYear()+interval);
+            else break;
         }
-        out.sort(function (a, b) { return a.startTime - b.startTime })
+        return out;
+    }
+    function expandEvents(events, winStart, winEnd) {
+        var out=[]; for (var i=0;i<events.length;i++){ var xs=expandEvent(events[i], winStart, winEnd); for (var k=0;k<xs.length;k++) out.push(xs[k]); }
+        out.sort(function(a,b){return a.startTime-b.startTime;}); return out;
+    }
+    function recurLabel(r){ if(!r||!r.freq) return "Does not repeat"; var n=Math.max(1,Math.floor(r.interval||1)); var u={daily:"day",weekly:"week",monthly:"month",yearly:"year"}[r.freq]; var b=(n===1?("Every "+u):("Every "+n+" "+u+"s")); return r.until?(b+", until "+new Date(r.until).toLocaleDateString()):b; }
+
+    // Cached expansion covering the whole visible 6×7 grid; re-evaluates when the
+    // month, event set, or calendar filter changes.
+    property var monthOccurrences: root.computeMonthOccurrences(root.viewMonth, root.events, root.filterCalId)
+    function computeMonthOccurrences(vm, evs, fcal) {
+        var first = new Date(vm.getFullYear(), vm.getMonth(), 1)
+        var offset = (first.getDay() + 6) % 7
+        var firstCell = new Date(first.getFullYear(), first.getMonth(), 1 - offset)
+        var ws = new Date(firstCell.getFullYear(), firstCell.getMonth(), firstCell.getDate(), 0, 0, 0, 0).getTime()
+        var we = ws + 42 * 24 * 3600 * 1000 - 1
+        var src = evs
+        if (fcal !== "") { src = []; for (var i = 0; i < evs.length; i++) if (evs[i].calendarId === fcal) src.push(evs[i]) }
+        return root.expandEvents(src, ws, we)
+    }
+
+    function eventsOnDay(d) {
+        var ds = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime()
+        var de = ds + 24 * 3600 * 1000 - 1
+        var occ = expandEvents(eventsFiltered(), ds, de)
+        var out = []
+        for (var i = 0; i < occ.length; i++) if (sameDay(new Date(occ[i].startTime), d)) out.push(occ[i])
         return out
     }
     function dotsOnDay(d) {
         var cols = []
-        for (var i = 0; i < events.length && cols.length < 4; i++) {
-            if (filterCalId !== "" && events[i].calendarId !== filterCalId) continue
-            if (sameDay(new Date(events[i].startTime), d)) cols.push(calColor(events[i].calendarId))
-        }
+        var occ = root.monthOccurrences
+        for (var i = 0; i < occ.length && cols.length < 4; i++)
+            if (sameDay(new Date(occ[i].startTime), d)) cols.push(calColor(occ[i].calendarId))
         return cols
     }
     function fmtTime(ms) { return Qt.formatTime(new Date(ms), "hh:mm") }
@@ -149,9 +202,61 @@ Item {
     // ── layout ───────────────────────────────────────────────────────────────
     Rectangle { anchors.fill: parent; color: Theme.palette.background }
 
+    // ── "starting soon" banner (in-app substitute for desktop notifications) ──
+    property var soonOcc: null          // the imminent occurrence, or null
+    property string soonText: ""        // "<title> starts in <N> min"
+    property bool soonVisible: false
+    property real dismissedOcc: -1      // occ timestamp the user dismissed
+    function computeSoon() {
+        var now = Date.now()
+        var occ = root.expandEvents(root.events, now, now + 15 * 60000)
+        var best = null
+        for (var i = 0; i < occ.length; i++) { if (occ[i].startTime >= now) { best = occ[i]; break } }
+        if (best && best.occ !== root.dismissedOcc) {
+            var mins = Math.max(0, Math.round((best.startTime - now) / 60000))
+            root.soonText = (best.title || "(untitled)") + " starts in " + mins + " min"
+            root.soonOcc = best
+            root.soonVisible = true
+        } else {
+            root.soonOcc = best
+            root.soonVisible = false
+        }
+    }
+
+    Rectangle {
+        id: soonBanner
+        anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
+        height: (root.soonVisible && root.soonText.length > 0) ? 40 : 0
+        visible: height > 0
+        clip: true
+        color: Theme.palette.primary
+        RowLayout {
+            anchors.fill: parent
+            anchors.leftMargin: Theme.spacing.medium; anchors.rightMargin: Theme.spacing.small
+            spacing: Theme.spacing.small
+            Rectangle { width: 8; height: 8; radius: 4; color: Theme.palette.background; Layout.alignment: Qt.AlignVCenter }
+            LogosText {
+                text: root.soonText; color: Theme.palette.background
+                font.pixelSize: 13; font.weight: Theme.typography.weightMedium
+                Layout.fillWidth: true; elide: Text.ElideRight; Layout.alignment: Qt.AlignVCenter
+            }
+            LogosText {
+                text: "✕"; color: Theme.palette.background; font.pixelSize: 14; Layout.alignment: Qt.AlignVCenter
+                MouseArea {
+                    anchors.fill: parent; anchors.margins: -6
+                    onClicked: {
+                        if (root.soonOcc) root.dismissedOcc = root.soonOcc.occ
+                        root.soonVisible = false
+                    }
+                }
+            }
+        }
+    }
+
     // 3 resizable panes: calendars | month | agenda. Drag the dividers to resize.
     SplitView {
-        anchors.fill: parent
+        anchors.top: soonBanner.bottom; anchors.left: parent.left
+        anchors.right: parent.right; anchors.bottom: parent.bottom
         orientation: Qt.Horizontal
 
         // ── pane 1: calendars sidebar ──────────────────────────────────────
@@ -367,6 +472,26 @@ Item {
     property string editCalId: ""
     property var evHistory: []             // getEventHistory result while editing
 
+    // ── richer-editor state (null-safe: absent on old events) ──
+    property bool evAllDay: false
+    property int evReminder: 10           // minutes before; 0 = none
+    property string evRecurFreq: ""       // "" = does not repeat | daily/weekly/monthly/yearly
+    readonly property var reminderOpts: [{ l: "None", v: 0 }, { l: "10 min", v: 10 }, { l: "30 min", v: 30 }, { l: "1 hour", v: 60 }, { l: "1 day", v: 1440 }]
+    readonly property var recurOpts: [{ l: "Does not repeat", v: "" }, { l: "Daily", v: "daily" }, { l: "Weekly", v: "weekly" }, { l: "Monthly", v: "monthly" }, { l: "Yearly", v: "yearly" }]
+    // Build the recur object from the current editor controls (null when "Does not repeat").
+    function buildRecur() {
+        if (!root.evRecurFreq) return null
+        var n = Math.max(1, Math.floor(parseInt(evRecurInterval.text) || 1))
+        var o = { freq: root.evRecurFreq, interval: n }
+        var u = evRecurUntil.text.trim()
+        if (u !== "") { var t = Date.parse(u); if (!isNaN(t)) o.until = t }
+        return o
+    }
+    // True when the event being edited is (part of) a recurring series.
+    function editingRecurring() {
+        return root.editingEvent && root.editingEvent.recur && root.editingEvent.recur.freq
+    }
+
     // Populate evFieldsModel (declared in the event popup) from the calendar's schema,
     // seeding each row from the event's stored `fields`. Clearing+refilling recreates
     // the Repeater delegates, so every open gets fresh reactive bindings.
@@ -414,15 +539,29 @@ Item {
         var end = new Date(selectedDay); end.setHours(10, 0, 0, 0)
         evTitle.text = ""; evDate.text = fmtDateInput(start)
         evStart.text = fmtTimeInput(start); evEnd.text = fmtTimeInput(end); evNotes.text = ""
+        evAllDay = false; evReminder = 10; evRecurFreq = ""
+        evLocation.text = ""; evUrl.text = ""; evRecurInterval.text = "1"; evRecurUntil.text = ""
         seedFieldVals(editCalId, null)
         eventPopup.open()
     }
-    function openEditEvent(ev) {
+    // `occ` may be an expanded occurrence — series edits operate on the MASTER, so
+    // load the real event (with its recurrence rule + true start date) by seriesId.
+    function openEditEvent(occ) {
+        var ev = occ
+        if (occ && occ.seriesId) { var m = root.eventById(occ.seriesId); if (m) ev = m }
         editingEvent = ev
         editCalId = ev.calendarId
         var s = new Date(ev.startTime), e = new Date(ev.endTime)
         evTitle.text = ev.title || ""; evDate.text = fmtDateInput(s)
         evStart.text = fmtTimeInput(s); evEnd.text = fmtTimeInput(e); evNotes.text = ev.description || ""
+        evAllDay = !!ev.allDay
+        evReminder = (ev.reminderMin !== undefined && ev.reminderMin !== null) ? ev.reminderMin : 10
+        evLocation.text = ev.location || ""
+        evUrl.text = ev.url || ""
+        var r = ev.recur
+        evRecurFreq = (r && r.freq) ? r.freq : ""
+        evRecurInterval.text = (r && r.interval) ? String(r.interval) : "1"
+        evRecurUntil.text = (r && typeof r.until === "number") ? fmtDateInput(new Date(r.until)) : ""
         seedFieldVals(ev.calendarId, ev)
         evHistory = root.j(core("getEventHistory", [ev.calendarId, ev.id]), [])
         eventPopup.open()
@@ -430,15 +569,33 @@ Item {
     function saveEvent() {
         var s = parseDateTime(evDate.text, evStart.text)
         var e = parseDateTime(evDate.text, evEnd.text)
-        if (e.getTime() <= s.getTime()) e = new Date(s.getTime() + 3600000)
+        if (root.evAllDay) {
+            // all-day → clamp to the day's bounds so downstream code still has valid times
+            s = new Date(s.getFullYear(), s.getMonth(), s.getDate(), 0, 0, 0, 0)
+            e = new Date(s.getFullYear(), s.getMonth(), s.getDate(), 23, 59, 0, 0)
+        } else if (e.getTime() <= s.getTime()) {
+            e = new Date(s.getTime() + 3600000)
+        }
         var hasSchema = schemaFor(editCalId).length > 0
+        var recur = root.buildRecur()
         if (editingEvent) {
             var up = editingEvent
+            delete up.seriesId; delete up.occ    // never persist expanded-occurrence markers
             up.title = evTitle.text.trim(); up.startTime = s.getTime(); up.endTime = e.getTime(); up.description = evNotes.text.trim()
+            up.allDay = root.evAllDay
+            up.location = evLocation.text.trim()
+            up.url = evUrl.text.trim()
+            up.reminderMin = root.evReminder
+            up.recur = recur    // null clears a previous recurrence
             if (hasSchema) up.fields = collectFieldVals(editCalId)
             core("updateEvent", [JSON.stringify(up)])
         } else {
-            var nv = { title: evTitle.text.trim(), startTime: s.getTime(), endTime: e.getTime(), allDay: false, description: evNotes.text.trim() }
+            var nv = {
+                title: evTitle.text.trim(), startTime: s.getTime(), endTime: e.getTime(),
+                allDay: root.evAllDay, description: evNotes.text.trim(),
+                location: evLocation.text.trim(), url: evUrl.text.trim(), reminderMin: root.evReminder
+            }
+            if (recur) nv.recur = recur
             if (hasSchema) nv.fields = collectFieldVals(editCalId)
             core("createEvent", [editCalId, JSON.stringify(nv)])
         }
@@ -515,15 +672,89 @@ Item {
             LogosText { text: "Title"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
             Field { id: evTitle; Layout.fillWidth: true; placeholderText: "Event title" }
 
+            // all-day toggle — hides the time inputs when on
+            Row {
+                spacing: 8
+                Rectangle {
+                    width: 22; height: 22; radius: 5
+                    color: root.evAllDay ? Theme.palette.primary : Theme.palette.background
+                    border.width: 1; border.color: Theme.palette.borderHairline
+                    LogosText { anchors.centerIn: parent; visible: root.evAllDay; text: "✓"; color: Theme.palette.background; font.pixelSize: 14 }
+                    MouseArea { anchors.fill: parent; onClicked: root.evAllDay = !root.evAllDay }
+                }
+                LogosText { text: "All-day"; color: Theme.palette.text; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
+            }
+
             RowLayout {
                 Layout.fillWidth: true; spacing: Theme.spacing.small
                 ColumnLayout { Layout.fillWidth: true; LogosText { text: "Date"; color: Theme.palette.textTertiary; font.pixelSize: 11 } Field { id: evDate; Layout.fillWidth: true; placeholderText: "YYYY-MM-DD" } }
-                ColumnLayout { LogosText { text: "Start"; color: Theme.palette.textTertiary; font.pixelSize: 11 } Field { id: evStart; Layout.preferredWidth: 80; placeholderText: "HH:MM" } }
-                ColumnLayout { LogosText { text: "End"; color: Theme.palette.textTertiary; font.pixelSize: 11 } Field { id: evEnd; Layout.preferredWidth: 80; placeholderText: "HH:MM" } }
+                ColumnLayout { visible: !root.evAllDay; LogosText { text: "Start"; color: Theme.palette.textTertiary; font.pixelSize: 11 } Field { id: evStart; Layout.preferredWidth: 80; placeholderText: "HH:MM" } }
+                ColumnLayout { visible: !root.evAllDay; LogosText { text: "End"; color: Theme.palette.textTertiary; font.pixelSize: 11 } Field { id: evEnd; Layout.preferredWidth: 80; placeholderText: "HH:MM" } }
             }
 
             LogosText { text: "Notes"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
             Field { id: evNotes; Layout.fillWidth: true; placeholderText: "Optional" }
+
+            LogosText { text: "Location"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
+            Field { id: evLocation; Layout.fillWidth: true; placeholderText: "Where" }
+
+            LogosText { text: "Meeting link"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
+            Field {
+                id: evUrl; Layout.fillWidth: true; placeholderText: "https://…"
+                inputMethodHints: Qt.ImhNoAutoUppercase | Qt.ImhUrlCharactersOnly
+            }
+
+            // reminder chips
+            LogosText { text: "Reminder"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
+            Flow {
+                Layout.fillWidth: true; spacing: 6
+                Repeater {
+                    model: root.reminderOpts
+                    delegate: Rectangle {
+                        height: 28; radius: 14; width: remLbl.width + 20
+                        color: root.evReminder === modelData.v ? Theme.palette.backgroundSecondary : Theme.palette.background
+                        border.width: 1
+                        border.color: root.evReminder === modelData.v ? Theme.palette.primary : Theme.palette.borderHairline
+                        LogosText { id: remLbl; anchors.centerIn: parent; text: modelData.l; color: Theme.palette.text; font.pixelSize: 13 }
+                        MouseArea { anchors.fill: parent; onClicked: root.evReminder = modelData.v }
+                    }
+                }
+            }
+
+            // recurrence
+            LogosText { text: "Repeat"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
+            Flow {
+                Layout.fillWidth: true; spacing: 6
+                Repeater {
+                    model: root.recurOpts
+                    delegate: Rectangle {
+                        height: 28; radius: 14; width: recLbl.width + 20
+                        color: root.evRecurFreq === modelData.v ? Theme.palette.backgroundSecondary : Theme.palette.background
+                        border.width: 1
+                        border.color: root.evRecurFreq === modelData.v ? Theme.palette.primary : Theme.palette.borderHairline
+                        LogosText { id: recLbl; anchors.centerIn: parent; text: modelData.l; color: Theme.palette.text; font.pixelSize: 13 }
+                        MouseArea { anchors.fill: parent; onClicked: root.evRecurFreq = modelData.v }
+                    }
+                }
+            }
+            RowLayout {
+                visible: root.evRecurFreq !== ""
+                Layout.fillWidth: true; spacing: Theme.spacing.small
+                ColumnLayout { LogosText { text: "Every N"; color: Theme.palette.textTertiary; font.pixelSize: 11 } Field { id: evRecurInterval; Layout.preferredWidth: 70; text: "1"; inputMethodHints: Qt.ImhFormattedNumbersOnly; placeholderText: "1" } }
+                ColumnLayout { Layout.fillWidth: true; LogosText { text: "Until (optional)"; color: Theme.palette.textTertiary; font.pixelSize: 11 } Field { id: evRecurUntil; Layout.fillWidth: true; placeholderText: "YYYY-MM-DD" } }
+            }
+            LogosText {
+                visible: root.evRecurFreq !== ""
+                text: root.recurLabel(root.buildRecur())
+                color: Theme.palette.textSecondary; font.pixelSize: 12
+            }
+
+            // note when editing a recurring series
+            LogosText {
+                visible: root.editingRecurring()
+                text: "Part of a repeating event — changes apply to the whole series."
+                color: Theme.palette.textTertiary; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true
+            }
 
             // ── custom fields (schema-driven) — nothing rendered for a plain calendar ──
             ListModel { id: evFieldsModel }
