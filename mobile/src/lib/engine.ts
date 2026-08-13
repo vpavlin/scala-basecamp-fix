@@ -8,6 +8,7 @@
 // One channel == one calendar; its log holds that calendar's events. Keep this in
 // lockstep with scala_engine.hpp; the golden-vector parity test (test/parity)
 // guards the two against drift.
+import { verifyEvent, isSigned } from "./identity";
 
 // ── HLC (hybrid logical clock): total order wall → ctr → dev ─────────────────
 export interface HLC {
@@ -30,6 +31,8 @@ export interface Event {
   hlc: HLC;
   dev: string;
   payload: any;
+  pub?: string; // author's 33B secp256k1 public key (hex) — authenticity layer
+  sig?: string; // 64B ECDSA over the canonical event (hex); absent on legacy events
 }
 
 // Event type constants — keep in lockstep with scala_engine.hpp ET::.
@@ -42,7 +45,7 @@ export const ET = {
 } as const;
 
 export function eventToJson(e: Event): any {
-  return {
+  const j: any = {
     v: e.v,
     id: e.id,
     type: e.type,
@@ -50,6 +53,9 @@ export function eventToJson(e: Event): any {
     dev: e.dev,
     payload: e.payload,
   };
+  if (e.pub) j.pub = e.pub;
+  if (e.sig) j.sig = e.sig;
+  return j;
 }
 export function eventFromJson(j: any): Event {
   const hlc = j && j.hlc && typeof j.hlc === "object" ? j.hlc : {};
@@ -64,6 +70,8 @@ export function eventFromJson(j: any): Event {
     },
     dev: typeof j?.dev === "string" ? j.dev : "",
     payload: j && typeof j.payload === "object" && j.payload !== null ? j.payload : {},
+    ...(typeof j?.pub === "string" ? { pub: j.pub } : {}),
+    ...(typeof j?.sig === "string" ? { sig: j.sig } : {}),
   };
 }
 
@@ -107,21 +115,33 @@ export function foldCalendar(calId: string, log: Event[]): FoldedCalendar {
   // the key writes). Once configured, only owner/admins write. Single HLC-ordered pass.
   const roleOf = new Map<string, string>(); // dev -> "admin"|"viewer"
   let rolesConfigured = false;
-  const canWrite = (dev: string): boolean =>
-    !rolesConfigured || dev === owner || roleOf.get(dev) === "admin";
+  // Authenticity gate — parity with scala_engine.hpp. A role-managed calendar trusts an
+  // author claim only when the event is signed by that author (verified); an OPEN calendar
+  // admits anyone (and legacy unsigned events). Signing gates roles, not writing.
+  const canWrite = (dev: string, verified: boolean): boolean => {
+    if (!rolesConfigured) return true;
+    if (!verified) return false;
+    return dev === owner || roleOf.get(dev) === "admin";
+  };
 
   for (const e of ordered) {
+    // A present-but-invalid signature = forgery/tampering → drop. Unsigned (legacy) events
+    // are admitted but never count as an authenticated author.
+    const signed = isSigned(e);
+    const verified = signed && verifyEvent(e);
+    if (signed && !verified) continue;
     const author = e.dev;
     if (e.type === ET.CAL_META) {
       if (!owner) owner = author; // creator = first cal.meta author
-      if (!canWrite(author)) continue;
+      if (!canWrite(author, verified)) continue;
       const p: any = e.payload;
       if (Object.prototype.hasOwnProperty.call(p, "name")) name = p.name ?? name;
       if (Object.prototype.hasOwnProperty.call(p, "color")) color = p.color ?? color;
       if (Object.prototype.hasOwnProperty.call(p, "description")) description = p.description ?? description;
       if (Array.isArray(p.schema)) schema = p.schema;
     } else if (e.type === ET.MEMBER_SET) {
-      if (!owner || !(author === owner || roleOf.get(author) === "admin")) continue;
+      // A role grant is admitted only from an AUTHENTICATED owner/admin.
+      if (!owner || !verified || !(author === owner || roleOf.get(author) === "admin")) continue;
       const m: string = (e.payload as any)?.member ?? "";
       const r: string = (e.payload as any)?.role ?? "";
       if (!m || m === owner) continue; // owner role is fixed
@@ -129,13 +149,13 @@ export function foldCalendar(calId: string, log: Event[]): FoldedCalendar {
       if (r === "remove") roleOf.delete(m);
       else if (r === "admin" || r === "viewer") roleOf.set(m, r);
     } else if (e.type === ET.EVENT_PUT) {
-      if (!canWrite(author)) continue; // viewer edits dropped
+      if (!canWrite(author, verified)) continue; // viewer/forged edits dropped
       const id: string = e.payload?.id ?? "";
       if (!id || tombstones.has(id)) continue; // tombstone terminal
       const ev = { ...e.payload, calendarId: calId, creatorId: e.dev };
       events.set(id, ev);
     } else if (e.type === ET.EVENT_DEL) {
-      if (!canWrite(author)) continue;
+      if (!canWrite(author, verified)) continue;
       const id: string = e.payload?.id ?? "";
       if (id) {
         tombstones.add(id);

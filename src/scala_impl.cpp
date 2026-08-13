@@ -124,6 +124,7 @@ scala::HLC ScalaImpl::nextHlc() {
 scala::Event ScalaImpl::mkEvent(const std::string& type, const json& payload) {
     scala::Event e; e.v = 1; e.id = generateUuid(); e.type = type;
     e.hlc = nextHlc(); e.dev = m_identity; e.payload = payload;
+    if (m_signId.valid) scala::signEvent(m_signId, e); // authenticity: sign as our address
     return e;
 }
 void ScalaImpl::publishAndApply(const std::string& calId, const scala::Event& e) {
@@ -167,8 +168,19 @@ void ScalaImpl::sendSyncReq(const std::string& calId) {
 // ── context lifecycle ────────────────────────────────────────────────────────
 void ScalaImpl::onContextReady() {
     // Identity (SDS senderId + event author) — persisted so it's stable.
-    m_identity = m_store->kvGet("identity");
-    if (m_identity.empty()) { m_identity = stableIdentity(); m_store->kvSet("identity", m_identity); }
+    // Signing identity: load the persisted secp256k1 private key, or generate one on
+    // first run. m_identity is the derived address ("0x…") — the verifiable author id.
+    {
+        std::string privHex = m_store->kvGet("sign_key");
+        if (!privHex.empty()) m_signId = scala::identityFromPriv(scala::fromHexB(privHex));
+        if (!m_signId.valid) {
+            m_signId = scala::generateIdentity();
+            if (m_signId.valid) m_store->kvSet("sign_key", scala::toHexS(m_signId.priv.data(), 32));
+        }
+        m_identity = m_signId.valid ? m_signId.address : m_store->kvGet("identity");
+        if (m_identity.empty()) { m_identity = stableIdentity(); }
+        m_store->kvSet("identity", m_identity);
+    }
 
     using LogosMap = nlohmann::json;
     using Tx = logos_transport::Transport<LogosMap>;

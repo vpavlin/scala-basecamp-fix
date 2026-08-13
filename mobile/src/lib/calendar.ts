@@ -9,18 +9,16 @@ import { fromByteArray, toByteArray } from "base64-js";
 import { store, Calendar, CalEvent } from "./store";
 import { Event, ET, Clock, eventToJson, eventFromJson } from "./engine";
 import { utf8Bytes, utf8Decode } from "./utf8";
+import { getIdentity, signEvent } from "./identity";
 import * as sync from "./scala-sync";
 import { buildInitial, respond } from "./catchup";
 
 // ── device identity (SDS senderId + event author) ───────────────────────────
-// A stable per-install id, used to attribute our writes (event.dev / hlc.dev).
+// The identity is now a secp256k1 keypair (identity.ts); its ADDRESS ("0x…") is the
+// verifiable author id used for event.dev / hlc.dev / the SDS senderId. Every authored
+// event is signed with the private key and verified on merge.
 export async function getDeviceId(): Promise<string> {
-  let id = await SecureStore.getItemAsync("scala-device-id");
-  if (!id) {
-    id = "scala-" + Crypto.randomUUID().replace(/-/g, "");
-    await SecureStore.setItemAsync("scala-device-id", id);
-  }
-  return id;
+  return (await getIdentity()).address;
 }
 
 // ── clock + event construction (mirrors scala_impl.cpp nextHlc / mkEvent) ────
@@ -39,7 +37,8 @@ async function ensureClock(): Promise<Clock> {
 }
 async function mkEvent(type: string, payload: any): Promise<Event> {
   const c = await ensureClock();
-  return { v: 1, id: Crypto.randomUUID(), type, hlc: c.send(Date.now()), dev: deviceId, payload };
+  const e: Event = { v: 1, id: Crypto.randomUUID(), type, hlc: c.send(Date.now()), dev: deviceId, payload };
+  return signEvent(await getIdentity(), e) as Event; // authenticity: sign as our address
 }
 // Append locally (persist FIRST — the authored event has no other copy until it's
 // both on disk and on the wire), then broadcast the raw event JSON.

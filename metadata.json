@@ -1,6 +1,6 @@
 {
   "name": "scala",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "type": "core",
   "category": "general",
   "description": "Secure Calendar App \u2014 privacy-first shared calendar module for Logos Core",

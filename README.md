@@ -23,6 +23,11 @@ moves sealed bytes).
   schema — a plain calendar looks exactly like a plain calendar, and a builder can grow
   something rich on the same log. (ADRs [0004](docs/adr/0004-roles-opt-in.md),
   [0005](docs/adr/0005-optional-field-schema.md).)
+- **Signed events.** Each device holds a secp256k1 keypair (identity = its `0x` address);
+  every event is signed and verified on merge, so roles are real authorization, not just
+  attribution — a forged author folds away. Byte-parity C++ (OpenSSL) ↔ TS (@noble). The
+  signer is a seam meant for a hardware backend (Keycard). (ADR
+  [0007](docs/adr/0007-event-signing-identity.md).)
 
 **→ [Design decisions (ADRs)](docs/adr/)** — the *why* behind all of the above, and the
 `docs/archive/` folder holds the (retired) migration plans.

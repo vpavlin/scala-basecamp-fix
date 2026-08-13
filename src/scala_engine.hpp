@@ -21,6 +21,7 @@
 // scala's: the ET:: event types and foldCalendar below (logos-sync ADR 0007).
 #include "logos_sync/event.hpp"
 #include "logos_sync/merge.hpp"
+#include "scala_identity.hpp"   // event signature verification (authenticity)
 
 namespace scala {
 using json = nlohmann::json;
@@ -65,25 +66,36 @@ inline json foldCalendar(const std::string& calId, const std::vector<Event>& log
     // Single HLC-ordered pass, roles built incrementally → order-independent + convergent.
     std::map<std::string, std::string> roleOf;   // dev -> "admin"|"viewer"
     bool rolesConfigured = false;
-    auto canWrite = [&](const std::string& dev) -> bool {
+    // Authenticity: a role-managed calendar trusts an author claim only when the event
+    // is cryptographically signed by that author (verified). An OPEN calendar admits
+    // anyone (and legacy unsigned events) as before — signing gates roles, not writing.
+    auto canWrite = [&](const std::string& dev, bool verified) -> bool {
         if (!rolesConfigured) return true;                 // open calendar
+        if (!verified) return false;                       // role-managed → author must be authenticated
         if (dev == owner) return true;
         auto it = roleOf.find(dev);
         return it != roleOf.end() && it->second == "admin";
     };
 
     for (const auto& e : ordered) {
+        // A present-but-invalid signature means the event was forged/tampered → drop it
+        // entirely. An UNSIGNED (legacy) event is admitted but never counts as an
+        // authenticated author (so it can't manage roles or write to a role-managed cal).
+        const bool signed_ = isSigned(e);
+        const bool verified = signed_ && verifyEvent(e);
+        if (signed_ && !verified) continue;
         const std::string& author = e.dev;
         if (e.type == ET::CAL_META) {
             if (owner.empty()) owner = author;             // creator = first cal.meta author
-            if (!canWrite(author)) continue;               // only admins edit meta once role-managed
+            if (!canWrite(author, verified)) continue;     // only admins edit meta once role-managed
             if (e.payload.contains("name"))        name        = e.payload.value("name", name);
             if (e.payload.contains("color"))       color       = e.payload.value("color", color);
             if (e.payload.contains("description")) description = e.payload.value("description", description);
             if (e.payload.contains("schema") && e.payload["schema"].is_array()) schema = e.payload["schema"];
         } else if (e.type == ET::MEMBER_SET) {
-            // a role grant admitted only if the author administers (owner or admin).
-            if (owner.empty() || !(author == owner || (roleOf.count(author) && roleOf[author] == "admin"))) continue;
+            // A role grant is admitted only if its author is an AUTHENTICATED owner/admin —
+            // an unsigned or forged member.set can never confer or revoke a role.
+            if (owner.empty() || !verified || !(author == owner || (roleOf.count(author) && roleOf[author] == "admin"))) continue;
             std::string m = e.payload.value("member", std::string());
             std::string r = e.payload.value("role", std::string());
             if (m.empty() || m == owner) continue;         // owner role is fixed
@@ -91,7 +103,7 @@ inline json foldCalendar(const std::string& calId, const std::vector<Event>& log
             if (r == "remove") roleOf.erase(m);
             else if (r == "admin" || r == "viewer") roleOf[m] = r;
         } else if (e.type == ET::EVENT_PUT) {
-            if (!canWrite(author)) continue;               // viewer edits dropped
+            if (!canWrite(author, verified)) continue;     // viewer/forged edits dropped
             std::string id = e.payload.value("id", std::string());
             if (id.empty() || tombstones.count(id)) continue;   // tombstone terminal
             json ev = e.payload;
@@ -99,7 +111,7 @@ inline json foldCalendar(const std::string& calId, const std::vector<Event>& log
             ev["creatorId"] = e.dev;
             events[id] = ev;
         } else if (e.type == ET::EVENT_DEL) {
-            if (!canWrite(author)) continue;
+            if (!canWrite(author, verified)) continue;
             std::string id = e.payload.value("id", std::string());
             if (!id.empty()) { tombstones.insert(id); events.erase(id); }
         }

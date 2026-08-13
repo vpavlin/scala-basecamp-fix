@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "scala_engine.hpp"
+#include "scala_identity.hpp"  // per-device secp256k1 signing identity
 #include <logos_module_context.h>  // LogosModuleContext base + logos_events: + modules()
 
 // Forward declarations for internal components (ported to std types)
@@ -128,7 +129,8 @@ logos_events:
 private:
     CalendarStore* m_store = nullptr;
     CalendarSync* m_sync = nullptr;
-    std::string m_identity;
+    std::string m_identity;      // == m_signId.address (the "0x…" author id)
+    scala::SignId m_signId;      // secp256k1 keypair; private key persisted in the kv store
     std::string m_namespace;
     bool m_ctxReady = false;              // onContextReady() actually fired
     std::string m_deliveryStatus;         // last transport status (Connecting/Connected/error)
