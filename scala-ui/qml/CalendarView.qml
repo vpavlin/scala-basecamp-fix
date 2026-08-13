@@ -470,6 +470,27 @@ Item {
     // ── event editor popup ─────────────────────────────────────────────────
     property var editingEvent: null       // null = creating
     property string editCalId: ""
+    // Can the current user WRITE to this calendar? Open calendars: anyone. Role-managed:
+    // owner or admin only — a viewer's writes fold away, so we make the editor read-only for
+    // them (no silent-drop). Reactive: re-evaluates when editCalId/calendars/identity change.
+    function canWrite(calId) {
+        var c = calById(calId); if (!c) return true
+        if (!c.rolesConfigured) return true
+        if (c.owner && c.owner === myIdentity) return true
+        var r = c.roles || {}
+        return r[myIdentity] === "admin"
+    }
+    readonly property bool eventReadOnly: !canWrite(editCalId)
+    // Inline validation — empty string == valid. Bound to the Save button + an error line.
+    function eventError() {
+        if (evTitle.text.trim() === "") return "Title is required."
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(evDate.text.trim())) return "Date must be YYYY-MM-DD."
+        if (!root.evAllDay) {
+            if (!/^\d{1,2}:\d{2}$/.test(evStart.text.trim())) return "Start time must be HH:MM."
+            if (!/^\d{1,2}:\d{2}$/.test(evEnd.text.trim())) return "End time must be HH:MM."
+        }
+        return ""
+    }
     property var evHistory: []             // getEventHistory result while editing
 
     // ── richer-editor state (null-safe: absent on old events) ──
@@ -676,7 +697,7 @@ Item {
             }
 
             LogosText { text: "Title"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
-            Field { id: evTitle; Layout.fillWidth: true; placeholderText: "Event title" }
+            Field { id: evTitle; readOnly: root.eventReadOnly; Layout.fillWidth: true; placeholderText: "Event title" }
 
             // all-day toggle — hides the time inputs when on
             Row {
@@ -693,20 +714,20 @@ Item {
 
             RowLayout {
                 Layout.fillWidth: true; spacing: Theme.spacing.small
-                ColumnLayout { Layout.fillWidth: true; LogosText { text: "Date"; color: Theme.palette.textTertiary; font.pixelSize: 11 } Field { id: evDate; Layout.fillWidth: true; placeholderText: "YYYY-MM-DD" } }
-                ColumnLayout { visible: !root.evAllDay; LogosText { text: "Start"; color: Theme.palette.textTertiary; font.pixelSize: 11 } Field { id: evStart; Layout.preferredWidth: 80; placeholderText: "HH:MM" } }
-                ColumnLayout { visible: !root.evAllDay; LogosText { text: "End"; color: Theme.palette.textTertiary; font.pixelSize: 11 } Field { id: evEnd; Layout.preferredWidth: 80; placeholderText: "HH:MM" } }
+                ColumnLayout { Layout.fillWidth: true; LogosText { text: "Date"; color: Theme.palette.textTertiary; font.pixelSize: 11 } Field { id: evDate; readOnly: root.eventReadOnly; Layout.fillWidth: true; placeholderText: "YYYY-MM-DD" } }
+                ColumnLayout { visible: !root.evAllDay; LogosText { text: "Start"; color: Theme.palette.textTertiary; font.pixelSize: 11 } Field { id: evStart; readOnly: root.eventReadOnly; Layout.preferredWidth: 80; placeholderText: "HH:MM" } }
+                ColumnLayout { visible: !root.evAllDay; LogosText { text: "End"; color: Theme.palette.textTertiary; font.pixelSize: 11 } Field { id: evEnd; readOnly: root.eventReadOnly; Layout.preferredWidth: 80; placeholderText: "HH:MM" } }
             }
 
             LogosText { text: "Notes"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
-            Field { id: evNotes; Layout.fillWidth: true; placeholderText: "Optional" }
+            Field { id: evNotes; readOnly: root.eventReadOnly; Layout.fillWidth: true; placeholderText: "Optional" }
 
             LogosText { text: "Location"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
-            Field { id: evLocation; Layout.fillWidth: true; placeholderText: "Where" }
+            Field { id: evLocation; readOnly: root.eventReadOnly; Layout.fillWidth: true; placeholderText: "Where" }
 
             LogosText { text: "Meeting link"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
             Field {
-                id: evUrl; Layout.fillWidth: true; placeholderText: "https://…"
+                id: evUrl; readOnly: root.eventReadOnly; Layout.fillWidth: true; placeholderText: "https://…"
                 inputMethodHints: Qt.ImhNoAutoUppercase | Qt.ImhUrlCharactersOnly
             }
 
@@ -838,12 +859,24 @@ Item {
                 }
             }
 
+            // View-only notice for viewers (no edit rights on this calendar).
+            LogosText {
+                visible: root.eventReadOnly
+                text: "View only — you don't have edit rights on this calendar."
+                color: Theme.palette.warning; font.pixelSize: 12; wrapMode: Text.WordWrap; Layout.fillWidth: true
+            }
+            // Inline validation error (only while editable).
+            LogosText {
+                visible: !root.eventReadOnly && root.eventError() !== ""
+                text: root.eventError()
+                color: Theme.palette.warning; font.pixelSize: 12; wrapMode: Text.WordWrap; Layout.fillWidth: true
+            }
             RowLayout {
                 Layout.fillWidth: true; Layout.topMargin: Theme.spacing.small; spacing: Theme.spacing.small
-                LogosButton { visible: root.editingEvent !== null; text: "Delete"; onClicked: root.deleteEvent() }
+                LogosButton { visible: root.editingEvent !== null && !root.eventReadOnly; text: "Delete"; onClicked: root.deleteEvent() }
                 Item { Layout.fillWidth: true }
                 LogosButton { text: "Cancel"; onClicked: eventPopup.close() }
-                LogosButton { text: root.editingEvent ? "Save" : "Create"; enabled: evTitle.text.trim().length > 0; onClicked: root.saveEvent() }
+                LogosButton { visible: !root.eventReadOnly; text: root.editingEvent ? "Save" : "Create"; enabled: root.eventError() === ""; onClicked: root.saveEvent() }
             }
         }
     }

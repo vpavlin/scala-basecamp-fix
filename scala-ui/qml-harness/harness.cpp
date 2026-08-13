@@ -37,7 +37,7 @@ QString MockLogos::callModule(const QString &mod, const QString &method, const Q
         fprintf(stderr, "[CALL] %s(%s)\n", qPrintable(method), qPrintable(parts.join(" | ")));
     }
     if (method == "listCalendars")
-        return QString(R"([{"id":"c1","name":"Plain","color":"#a6e3a1","encryptionKey":"k","creatorId":"0xme","owner":"0xme","roles":{},"rolesConfigured":false,"schema":[]},{"id":"c2","name":"Freequencies","color":"#89b4fa","description":"nightlife","encryptionKey":"k","creatorId":"0xme","owner":"0xme","roles":{},"rolesConfigured":false,"schema":[{"key":"venue","label":"Venue","type":"text"},{"key":"vip","label":"VIP","type":"bool"},{"key":"status","label":"Status","type":"enum","options":["confirmed","tentative"]}]}])");
+        return QString(R"([{"id":"c1","name":"Plain","color":"#a6e3a1","encryptionKey":"k","creatorId":"0xme","owner":"0xme","roles":{},"rolesConfigured":false,"schema":[]},{"id":"c2","name":"Freequencies","color":"#89b4fa","description":"nightlife","encryptionKey":"k","creatorId":"0xowner","owner":"0xowner","roles":{"0xme00000000000000000000000000000000000000":"viewer"},"rolesConfigured":true,"schema":[{"key":"venue","label":"Venue","type":"text"}]}])");
     if (method == "listEvents")
         return QString(R"([{"id":"e1","calendarId":"c1","title":"Opening night","startTime":%1,"endTime":%2,"fields":{"venue":"Club X","vip":true,"status":"confirmed"}}])")
             .arg(EV_START).arg(EV_END);
