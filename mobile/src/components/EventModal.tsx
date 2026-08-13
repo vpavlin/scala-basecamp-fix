@@ -42,7 +42,7 @@ export interface HistoryEntry { author: string; at: number; action: string; payl
 
 export function EventModal({
   visible, initial, calendars, calendarId, onPickCalendar, canPickCalendar, onSave, onDelete, onClose,
-  schema = [], loadHistory,
+  schema = [], loadHistory, canEdit = true,
 }: {
   visible: boolean;
   initial: EventDraft;
@@ -55,6 +55,7 @@ export function EventModal({
   onClose: () => void;
   schema?: FieldDef[];           // #8: the calendar's custom-field definitions (empty = none)
   loadHistory?: () => Promise<HistoryEntry[]>; // #4: async edit-history loader (when editing)
+  canEdit?: boolean;             // false = viewer on a role-managed calendar → read-only
 }) {
   const [title, setTitle] = useState(initial.title);
   const [start, setStart] = useState(new Date(initial.startTime));
@@ -176,7 +177,7 @@ export function EventModal({
             )}
 
             <Text style={s.label}>Title</Text>
-            <TextInput style={s.input} value={title} onChangeText={setTitle} placeholder="Event title" placeholderTextColor={C.sub} autoFocus={!initial.id} />
+            <TextInput style={s.input} value={title} editable={canEdit} onChangeText={setTitle} placeholder="Event title" placeholderTextColor={C.sub} autoFocus={!initial.id} />
 
             <Pressable style={s.toggleRow} onPress={() => setAllDay((v) => !v)}>
               <Text style={s.label}>All-day</Text>
@@ -196,10 +197,10 @@ export function EventModal({
             </View>
 
             <Text style={s.label}>Location</Text>
-            <TextInput style={s.input} value={location} onChangeText={setLocation} placeholder="Where" placeholderTextColor={C.sub} />
+            <TextInput style={s.input} value={location} editable={canEdit} onChangeText={setLocation} placeholder="Where" placeholderTextColor={C.sub} />
 
             <Text style={s.label}>Meeting link</Text>
-            <TextInput style={s.input} value={url} onChangeText={setUrl} placeholder="https://…" placeholderTextColor={C.sub} autoCapitalize="none" keyboardType="url" />
+            <TextInput style={s.input} value={url} editable={canEdit} onChangeText={setUrl} placeholder="https://…" placeholderTextColor={C.sub} autoCapitalize="none" keyboardType="url" />
 
             <Text style={s.label}>Reminder</Text>
             <View style={s.calRow}>
@@ -244,7 +245,7 @@ export function EventModal({
             )}
 
             <Text style={s.label}>Notes</Text>
-            <TextInput style={[s.input, { height: 72 }]} value={desc} onChangeText={setDesc} placeholder="Optional" placeholderTextColor={C.sub} multiline />
+            <TextInput style={[s.input, { height: 72 }]} value={desc} editable={canEdit} onChangeText={setDesc} placeholder="Optional" placeholderTextColor={C.sub} multiline />
 
             {/* #8: custom fields, driven by the calendar's schema. Nothing shows when empty. */}
             {schema.map((f) => (
@@ -286,10 +287,15 @@ export function EventModal({
               />
             )}
 
-            <Pressable style={[s.btn, { backgroundColor: C.accent }]} onPress={save}>
-              <Text style={[s.btnT, { color: C.bg }]}>{initial.id ? "Save" : "Create"}</Text>
-            </Pressable>
-            {initial.id && onDelete && (
+            {!canEdit && (
+              <Text style={{ color: "#f9e2af", fontSize: 12, marginTop: 14 }}>View only — you don't have edit rights on this calendar.</Text>
+            )}
+            {canEdit && (
+              <Pressable style={[s.btn, { backgroundColor: C.accent }]} onPress={save}>
+                <Text style={[s.btnT, { color: C.bg }]}>{initial.id ? "Save" : "Create"}</Text>
+              </Pressable>
+            )}
+            {initial.id && onDelete && canEdit && (
               <Pressable style={[s.btn, { backgroundColor: "transparent" }]} onPress={onDelete}>
                 <Text style={[s.btnT, { color: C.danger }]}>Delete event</Text>
               </Pressable>

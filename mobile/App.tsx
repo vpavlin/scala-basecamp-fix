@@ -504,6 +504,7 @@ export default function App() {
           calendarId={modal.calId}
           onPickCalendar={(id) => setModal((m) => ({ ...m, calId: id }))}
           canPickCalendar={!modal.editing}
+          canEdit={roleOf(cals.find((c) => c.id === modal.calId) || ({} as Calendar)) !== "viewer"}
           onSave={saveEvent}
           onDelete={modal.editing ? removeEvent : undefined}
           onClose={() => setModal((m) => ({ ...m, open: false }))}

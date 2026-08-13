@@ -714,9 +714,15 @@ Item {
 
             RowLayout {
                 Layout.fillWidth: true; spacing: Theme.spacing.small
-                ColumnLayout { Layout.fillWidth: true; LogosText { text: "Date"; color: Theme.palette.textTertiary; font.pixelSize: 11 } Field { id: evDate; readOnly: root.eventReadOnly; Layout.fillWidth: true; placeholderText: "YYYY-MM-DD" } }
-                ColumnLayout { visible: !root.evAllDay; LogosText { text: "Start"; color: Theme.palette.textTertiary; font.pixelSize: 11 } Field { id: evStart; readOnly: root.eventReadOnly; Layout.preferredWidth: 80; placeholderText: "HH:MM" } }
-                ColumnLayout { visible: !root.evAllDay; LogosText { text: "End"; color: Theme.palette.textTertiary; font.pixelSize: 11 } Field { id: evEnd; readOnly: root.eventReadOnly; Layout.preferredWidth: 80; placeholderText: "HH:MM" } }
+                ColumnLayout { Layout.fillWidth: true; LogosText { text: "Date"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
+                    Field { id: evDate; readOnly: true; Layout.fillWidth: true; placeholderText: "YYYY-MM-DD"
+                        MouseArea { anchors.fill: parent; enabled: !root.eventReadOnly; cursorShape: Qt.PointingHandCursor; onClicked: datePicker.openFor(evDate, evDate.text) } } }
+                ColumnLayout { visible: !root.evAllDay; LogosText { text: "Start"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
+                    Field { id: evStart; readOnly: true; Layout.preferredWidth: 80; placeholderText: "HH:MM"
+                        MouseArea { anchors.fill: parent; enabled: !root.eventReadOnly; cursorShape: Qt.PointingHandCursor; onClicked: timePicker.openFor(evStart, evStart.text) } } }
+                ColumnLayout { visible: !root.evAllDay; LogosText { text: "End"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
+                    Field { id: evEnd; readOnly: true; Layout.preferredWidth: 80; placeholderText: "HH:MM"
+                        MouseArea { anchors.fill: parent; enabled: !root.eventReadOnly; cursorShape: Qt.PointingHandCursor; onClicked: timePicker.openFor(evEnd, evEnd.text) } } }
             }
 
             LogosText { text: "Notes"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
@@ -877,6 +883,111 @@ Item {
                 Item { Layout.fillWidth: true }
                 LogosButton { text: "Cancel"; onClicked: eventPopup.close() }
                 LogosButton { visible: !root.eventReadOnly; text: root.editingEvent ? "Save" : "Create"; enabled: root.eventError() === ""; onClicked: root.saveEvent() }
+            }
+        }
+    }
+
+    // ── date picker (month grid) — writes YYYY-MM-DD into a target Field ───────
+    Popup {
+        id: datePicker
+        property var targetField: null
+        property date pickMonth: new Date()
+        function openFor(field, curText) {
+            targetField = field
+            var d = /^\d{4}-\d{2}-\d{2}$/.test((curText || "").trim()) ? new Date(curText.trim() + "T00:00:00") : new Date()
+            pickMonth = new Date(d.getFullYear(), d.getMonth(), 1)
+            open()
+        }
+        anchors.centerIn: Overlay.overlay
+        width: 300; modal: true; padding: Theme.spacing.large
+        background: Rectangle { radius: Theme.spacing.radiusMedium; color: Theme.palette.backgroundElevated; border.width: 1; border.color: Theme.palette.borderHairline }
+        ColumnLayout {
+            anchors.fill: parent; spacing: Theme.spacing.small
+            RowLayout {
+                Layout.fillWidth: true
+                LogosButton { text: "‹"; onClicked: datePicker.pickMonth = new Date(datePicker.pickMonth.getFullYear(), datePicker.pickMonth.getMonth() - 1, 1) }
+                LogosText { Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; text: root.monthNames[datePicker.pickMonth.getMonth()] + " " + datePicker.pickMonth.getFullYear(); color: Theme.palette.text; font.pixelSize: 15 }
+                LogosButton { text: "›"; onClicked: datePicker.pickMonth = new Date(datePicker.pickMonth.getFullYear(), datePicker.pickMonth.getMonth() + 1, 1) }
+            }
+            Row {
+                Layout.alignment: Qt.AlignHCenter
+                Repeater { model: root.weekDays; delegate: LogosText { width: 38; horizontalAlignment: Text.AlignHCenter; text: modelData.substring(0, 1); color: Theme.palette.textTertiary; font.pixelSize: 10 } }
+            }
+            Grid {
+                columns: 7; Layout.alignment: Qt.AlignHCenter; rowSpacing: 2; columnSpacing: 2
+                Repeater {
+                    model: 42
+                    delegate: Rectangle {
+                        width: 38; height: 32; radius: 6
+                        property date cd: {
+                            var first = new Date(datePicker.pickMonth.getFullYear(), datePicker.pickMonth.getMonth(), 1)
+                            var offset = (first.getDay() + 6) % 7
+                            return new Date(first.getFullYear(), first.getMonth(), 1 - offset + index)
+                        }
+                        property bool inMonth: cd.getMonth() === datePicker.pickMonth.getMonth()
+                        property bool today: root.sameDay(cd, new Date())
+                        color: today ? Theme.palette.backgroundSecondary : "transparent"
+                        border.width: today ? 1 : 0; border.color: Theme.palette.primary
+                        LogosText { anchors.centerIn: parent; text: cd.getDate(); color: inMonth ? Theme.palette.text : Theme.palette.textTertiary; font.pixelSize: 12 }
+                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: { if (datePicker.targetField) datePicker.targetField.text = root.fmtDateInput(cd); datePicker.close() } }
+                    }
+                }
+            }
+            LogosButton { Layout.alignment: Qt.AlignRight; text: "Cancel"; onClicked: datePicker.close() }
+        }
+    }
+
+    // ── time picker (hour + minute columns) — writes HH:MM into a target Field ─
+    Popup {
+        id: timePicker
+        property var targetField: null
+        property int selHour: 9
+        property int selMin: 0
+        function openFor(field, curText) {
+            targetField = field
+            var m = /^(\d{1,2}):(\d{2})$/.exec((curText || "").trim())
+            selHour = m ? Math.max(0, Math.min(23, parseInt(m[1]))) : 9
+            selMin = m ? Math.max(0, Math.min(59, parseInt(m[2]))) : 0
+            open()
+        }
+        anchors.centerIn: Overlay.overlay
+        width: 260; height: 340; modal: true; padding: Theme.spacing.large
+        background: Rectangle { radius: Theme.spacing.radiusMedium; color: Theme.palette.backgroundElevated; border.width: 1; border.color: Theme.palette.borderHairline }
+        ColumnLayout {
+            anchors.fill: parent; spacing: Theme.spacing.small
+            LogosText { text: "Pick time"; color: Theme.palette.text; font.pixelSize: 15; font.weight: Theme.typography.weightMedium }
+            RowLayout {
+                Layout.fillWidth: true; Layout.fillHeight: true; spacing: Theme.spacing.small
+                ListView {
+                    id: hourList; Layout.fillWidth: true; Layout.fillHeight: true; clip: true
+                    model: 24; currentIndex: timePicker.selHour
+                    ScrollBar.vertical: ScrollBar {}
+                    delegate: Rectangle {
+                        width: ListView.view.width; height: 30; radius: 5
+                        color: timePicker.selHour === index ? Theme.palette.primary : "transparent"
+                        LogosText { anchors.centerIn: parent; text: root.pad(index); color: timePicker.selHour === index ? Theme.palette.background : Theme.palette.text; font.pixelSize: 13 }
+                        MouseArea { anchors.fill: parent; onClicked: timePicker.selHour = index }
+                    }
+                }
+                LogosText { text: ":"; color: Theme.palette.text; font.pixelSize: 18 }
+                ListView {
+                    id: minList; Layout.fillWidth: true; Layout.fillHeight: true; clip: true
+                    model: 12; currentIndex: Math.round(timePicker.selMin / 5)
+                    ScrollBar.vertical: ScrollBar {}
+                    delegate: Rectangle {
+                        width: ListView.view.width; height: 30; radius: 5
+                        property int mv: index * 5
+                        color: timePicker.selMin === mv ? Theme.palette.primary : "transparent"
+                        LogosText { anchors.centerIn: parent; text: root.pad(index * 5); color: timePicker.selMin === mv ? Theme.palette.background : Theme.palette.text; font.pixelSize: 13 }
+                        MouseArea { anchors.fill: parent; onClicked: timePicker.selMin = mv }
+                    }
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                LogosButton { text: "Cancel"; onClicked: timePicker.close() }
+                LogosButton { text: "Set"; onClicked: { if (timePicker.targetField) timePicker.targetField.text = root.pad(timePicker.selHour) + ":" + root.pad(timePicker.selMin); timePicker.close() } }
             }
         }
     }

@@ -87,9 +87,11 @@ int main(int argc, char **argv) {
     QTimer::singleShot(1200, [&] { grab(&view, out + "/01-main.png"); });
     // New-calendar dialog now has the custom-fields editor (matches settings).
     QTimer::singleShot(1600, [&] { runJs(&view, "openNewEvent()"); });
-    QTimer::singleShot(2000, [&] { grab(&view, out + "/01-newevent-plain.png"); fprintf(stderr, "--- switch to c2 (schema calendar) ---\n"); runJs(&view, "evCalSelect.activated(1)"); });
-    QTimer::singleShot(2500, [&] { grab(&view, out + "/02-newevent-schema.png"); });
-    QTimer::singleShot(2900, [&] { app.quit(); });
+    QTimer::singleShot(2000, [&] { runJs(&view, "datePicker.openFor(evDate, evDate.text)"); });
+    QTimer::singleShot(2400, [&] { grab(&view, out + "/01-datepicker.png"); runJs(&view, "datePicker.close()"); });
+    QTimer::singleShot(2700, [&] { runJs(&view, "timePicker.openFor(evStart, evStart.text)"); });
+    QTimer::singleShot(3100, [&] { grab(&view, out + "/02-timepicker.png"); });
+    QTimer::singleShot(3400, [&] { app.quit(); });
     return app.exec();
 }
 #include "harness.moc"
