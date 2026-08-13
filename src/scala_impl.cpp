@@ -288,6 +288,37 @@ std::string ScalaImpl::createCalendar(const std::string& name, const std::string
     publishAndApply(id, mkEvent(scala::ET::CAL_META, json{{"name", name}, {"color", color}}));
     return id;
 }
+// #7/#8: edit shared calendar metadata — {name?,color?,description?,schema?} (LWW cal.meta).
+bool ScalaImpl::updateCalendarMeta(const std::string& calId, const std::string& fieldsJson) {
+    json in = json::parse(fieldsJson, nullptr, false);
+    if (in.is_discarded() || !in.is_object()) return false;
+    json p = json::object();
+    for (const char* k : {"name", "color", "description"})
+        if (in.contains(k) && in[k].is_string()) p[k] = in[k];
+    if (in.contains("schema") && in["schema"].is_array()) p["schema"] = in["schema"];
+    if (p.empty()) return false;
+    publishAndApply(calId, mkEvent(scala::ET::CAL_META, p));
+    return true;
+}
+// #3: grant/revoke a member by identity — role is "admin"|"viewer"|"remove". The fold
+// admits this only if WE are owner/admin, so a viewer calling it is a no-op everywhere.
+bool ScalaImpl::setMemberRole(const std::string& calId, const std::string& member, const std::string& role) {
+    if (member.empty()) return false;
+    publishAndApply(calId, mkEvent(scala::ET::MEMBER_SET, json{{"member", member}, {"role", role}}));
+    return true;
+}
+// #4: per-event edit history — every event.put/del touching this id, in log order,
+// as [{author,at,action,payload}]. Reads the raw log (not the fold) so nothing collapses.
+std::string ScalaImpl::getEventHistory(const std::string& calId, const std::string& eventId) {
+    json out = json::array();
+    for (const auto& e : m_store->log(calId)) {
+        if (!e.payload.is_object() || e.payload.value("id", std::string()) != eventId) continue;
+        std::string action = e.type == scala::ET::EVENT_DEL ? "deleted"
+                           : (out.empty() ? "created" : "edited");
+        out.push_back(json{{"author", e.dev}, {"at", e.hlc.wall}, {"action", action}, {"payload", e.payload}});
+    }
+    return out.dump();
+}
 std::string ScalaImpl::listCalendars() {
     ensureDelivery();   // kym self-drive
     json arr = json::array();
@@ -296,7 +327,13 @@ std::string ScalaImpl::listCalendars() {
         std::string nm = f.value("name", std::string()); if (nm.empty()) nm = c.name;
         std::string col = f.value("color", std::string()); if (col.empty()) col = c.color;
         arr.push_back(json{{"id", c.id}, {"name", nm}, {"color", col},
-                           {"isShared", true}, {"encryptionKey", c.key}, {"creatorId", m_identity}});
+                           {"isShared", true}, {"encryptionKey", c.key}, {"creatorId", m_identity},
+                           // #7/#8/#3: surface description, custom-field schema and roles to the view.
+                           {"description", f.value("description", std::string())},
+                           {"schema", f.value("schema", json::array())},
+                           {"owner", f.value("owner", std::string())},
+                           {"roles", f.value("roles", json::object())},
+                           {"rolesConfigured", f.value("rolesConfigured", false)}});
     }
     return arr.dump();
 }

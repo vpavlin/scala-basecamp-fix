@@ -41,6 +41,12 @@ public:
     /// Delete a calendar and all its events.
     bool deleteCalendar(const std::string& id);
 
+    /// #7/#8: edit shared calendar metadata — JSON {name?,color?,description?,schema?}.
+    bool updateCalendarMeta(const std::string& calId, const std::string& fieldsJson);
+
+    /// #3: grant/revoke a member — role is "admin"|"viewer"|"remove" (fold enforces owner/admin).
+    bool setMemberRole(const std::string& calId, const std::string& member, const std::string& role);
+
     // ── Event CRUD ───────────────────────────────────────────────────────────
     /// Create an event in a calendar. Returns the event ID.
     std::string createEvent(const std::string& calendarId, const std::string& eventJson);
@@ -59,6 +65,9 @@ public:
 
     /// List all events in a calendar. Returns JSON array string.
     std::string listEvents(const std::string& calendarId);
+
+    /// #4: per-event edit history — [{author,at,action,payload}] from the raw log.
+    std::string getEventHistory(const std::string& calId, const std::string& eventId);
 
     /// Get a single event by ID. Returns JSON object string.
     std::string getEvent(const std::string& id);
