@@ -617,13 +617,27 @@ Item {
     Popup {
         id: newCalPopup
         anchors.centerIn: Overlay.overlay
-        width: 360; modal: true; padding: Theme.spacing.large
+        width: 500; modal: true; padding: Theme.spacing.large
         background: Rectangle { radius: Theme.spacing.radiusMedium; color: Theme.palette.backgroundElevated; border.width: 1; border.color: Theme.palette.borderHairline }
-        onOpened: { newCalName.text = ""; root.newCalColor = root.presetColors[1] }
+        onOpened: { newCalName.text = ""; newCalDesc.text = ""; root.newCalColor = root.presetColors[1] }
+        function createNow() {
+            var id = String(root.core("createCalendar", [newCalName.text.trim(), root.newCalColor]))
+            var d = newCalDesc.text.trim()
+            if (id !== "" && d !== "") root.core("updateCalendarMeta", [id, JSON.stringify({ description: d })])
+            newCalPopup.close(); root.refresh()
+        }
         ColumnLayout {
             anchors.fill: parent; spacing: Theme.spacing.small
+
             LogosText { text: "New calendar"; color: Theme.palette.text; font.pixelSize: 18; font.weight: Theme.typography.weightMedium }
+
+            LogosText { text: "Name"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
             Field { id: newCalName; Layout.fillWidth: true; placeholderText: "Calendar name" }
+
+            LogosText { text: "Description"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
+            Field { id: newCalDesc; Layout.fillWidth: true; placeholderText: "Optional description" }
+
+            LogosText { text: "Color"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
             Flow {
                 Layout.fillWidth: true; spacing: 8
                 Repeater {
@@ -641,7 +655,7 @@ Item {
                 LogosButton { text: "Cancel"; onClicked: newCalPopup.close() }
                 LogosButton {
                     text: "Create"; enabled: newCalName.text.trim().length > 0
-                    onClicked: { root.core("createCalendar", [newCalName.text.trim(), root.newCalColor]); newCalPopup.close(); root.refresh() }
+                    onClicked: newCalPopup.createNow()
                 }
             }
         }
@@ -798,12 +812,9 @@ Item {
 
                     // ── sharing & roles ──
                     LogosText { text: "Sharing & roles"; color: Theme.palette.text; font.pixelSize: 14; font.weight: Theme.typography.weightMedium }
-
-                    LogosText { text: "Your identity"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
-                    RowLayout {
-                        Layout.fillWidth: true; spacing: Theme.spacing.small
-                        Field { id: myIdField; Layout.fillWidth: true; readOnly: true; selectByMouse: true; text: root.myIdentity }
-                        LogosButton { text: "Copy"; onClicked: { myIdField.selectAll(); myIdField.copy() } }
+                    LogosText {
+                        text: "Add someone by their identity (they'll find it in Diagnostics ⚙ → This device id)."
+                        color: Theme.palette.textTertiary; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true
                     }
 
                     LogosText {
@@ -1006,8 +1017,12 @@ Item {
                 text: root.diag ? ("data: " + (root.diag.dataDir || "?")) : ""
                 color: Theme.palette.textTertiary; font.pixelSize: 11; elide: Text.ElideMiddle; Layout.fillWidth: true
             }
-            LogosText { text: "This device id"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
-            Field { text: root.diag ? (root.diag.identity || "(none)") : ""; Layout.fillWidth: true; readOnly: true; selectByMouse: true }
+            LogosText { text: "Your identity (share this to be added to a calendar)"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
+            RowLayout {
+                Layout.fillWidth: true; spacing: Theme.spacing.small
+                Field { id: diagIdField; text: root.diag ? (root.diag.identity || root.myIdentity || "(none)") : root.myIdentity; Layout.fillWidth: true; readOnly: true; selectByMouse: true }
+                LogosButton { text: "Copy"; onClicked: { diagIdField.selectAll(); diagIdField.copy() } }
+            }
 
             LogosText { text: "Per-calendar sync"; color: Theme.palette.textTertiary; font.pixelSize: 11; Layout.topMargin: Theme.spacing.small }
             ListView {
