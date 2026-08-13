@@ -1,23 +1,47 @@
 # Scala — Secure CALendar App
 
-A privacy-first shared calendar app built on [Logos Core](https://logos.co).
+A privacy-first, **local-first shared calendar** built on [Logos](https://logos.co) / Waku.
+It runs on the **desktop** (a Basecamp module) and on **Android** (a React Native app),
+and the two sync **peer-to-peer** — no server. Several people can edit a shared calendar
+offline and converge with no write lost; it's end-to-end encrypted (the network only ever
+moves sealed bytes).
 
 **Scala** = **S**ecure **CAL**endar **A**pp
 
-## Architecture (v0.2.0)
+## How it works (the short version)
 
-Scala is now a two-module system compatible with **basecamp 0.2.0**:
+- **Event-log CRDT.** A calendar is an append-only log of immutable events; state is a pure
+  fold over the merged log. Merge is union-by-id + HLC order → idempotent, commutative,
+  convergent. (ADR [0001](docs/adr/0001-event-log-crdt.md).)
+- **Shared sync engine.** The generic spine (envelope, HLC, merge, catch-up) is the shared
+  [logos-sync](https://github.com/vpavlin/logos-sync) library; the byte transport is
+  [logos-transport](https://github.com/vpavlin/logos-transport). Scala owns only its
+  calendar fold, roles, schema, and crypto. (ADR [0002](docs/adr/0002-adopt-logos-sync.md).)
+- **Catch-up.** A joining/returning device reconciles via recursive RBSR — it pulls the
+  id-exact delta, not the whole log. (ADR [0003](docs/adr/0003-catch-up-recursive-rbsr.md).)
+- **Roles** are opt-in and default-open; **custom fields** are an optional per-calendar
+  schema — a plain calendar looks exactly like a plain calendar, and a builder can grow
+  something rich on the same log. (ADRs [0004](docs/adr/0004-roles-opt-in.md),
+  [0005](docs/adr/0005-optional-field-schema.md).)
+
+**→ [Design decisions (ADRs)](docs/adr/)** — the *why* behind all of the above, and the
+`docs/archive/` folder holds the (retired) migration plans.
+
+## Desktop architecture (Basecamp module, basecamp 0.2.0)
 
 | Module | Type | Description |
 |--------|------|-------------|
-| `scala` | `core` (universal) | Core business logic — calendar/event CRUD, sync, sharing, search, reminders |
-| `scala-ui` | `ui_qml` (universal) | QML frontend with C++ backend that delegates to core via typed replica |
+| `scala` | `core` (universal) | Core business logic — calendar/event CRUD, the fold, sync, sharing |
+| `scala-ui` | `ui_qml` (universal) | QML frontend with a C++ backend that delegates to core via a typed replica |
 
 Both modules use the [logos-module-builder 0.2.0](https://github.com/logos-co/logos-module-builder) universal authoring model:
 - Auto-generated plugin wrappers from `*.impl.h` headers
 - Typed inter-module SDK via `modules().dep.method()`
 - Event subscriptions via `logos_events:` declarations
 - No hand-written Qt plugins, no `Q_PLUGIN_METADATA`, no manual IPC wiring
+
+The **mobile app** lives in [`mobile/`](mobile/) (Expo / React Native, arm64) and folds the
+*same* event log with a byte-parity TypeScript mirror of the core (ADR [0006](docs/adr/0006-two-clients-one-fold.md)).
 
 ## Building
 
@@ -106,21 +130,19 @@ scala/
 
 ## Status
 
-🚧 Migration to basecamp 0.2.0 in progress — see [migration plan](docs/migration-plan-basecamp-0.2.0.md)
+**Working end-to-end, verified on real devices.** Desktop (Basecamp) ⇄ mobile ⇄ an
+always-on headless hub sync peer-to-peer over Waku; cold-start and phone-was-off catch-up
+both converge.
 
-**Completed:**
-- ✅ Core module universal pattern (`scala_impl.h/.cpp`)
-- ✅ UI module scaffold + C++ backend (`scala_ui_backend.*`)
-- ✅ QML ported to typed replica pattern (async `logos.watch()`)
-- ✅ Build system migrated to Nix flake only (Makefile removed)
-- ✅ CI updated for logos-module-builder
+- ✅ Basecamp 0.2.0 module (core + `scala-ui`), packaged as `.lgx`
+- ✅ Android app (`mobile/`), on the shared Logos Delivery ("Loam") node or embedded
+- ✅ Event-log CRDT + byte-parity fold across C++ and TypeScript
+- ✅ Sync on [logos-sync](https://github.com/vpavlin/logos-sync) recursive-RBSR catch-up
+- ✅ Sharing via `scala://join` invite links (AES-256-GCM, key in the link)
+- ✅ Calendar description, opt-in roles, optional custom-field schema, edit history
 
-**Pending:**
-- ⏳ Compilation verification (requires Crib build environment)
-- ⏳ Integration test in basecamp 0.2.0
-- ⏳ kv_module migration to universal pattern
-- ⏳ Wire messaging_module for P2P sync
-- ⏳ Package as .lgx
+**Next:** consume logos-sync as a submodule (currently vendored); richer field rendering;
+notifications; the `logos-*` → `loam-*` rename.
 
 ## Legacy (v0.1)
 
