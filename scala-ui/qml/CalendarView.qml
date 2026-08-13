@@ -868,7 +868,10 @@ Item {
             newCalSchemaModel.clear(); ncNewKey.text = ""; ncNewLabel.text = ""; ncNewOptions.text = ""; root.ncNewType = "text"
         }
         function createNow() {
-            var id = String(root.core("createCalendar", [newCalName.text.trim(), root.newCalColor]))
+            // core returns are double-JSON-encoded — unwrap with j() (like getIdentity/
+            // listCalendars) or the id comes back quoted and updateCalendarMeta targets the
+            // WRONG calendar, so description/custom-fields silently never save on create.
+            var id = String(root.j(root.core("createCalendar", [newCalName.text.trim(), root.newCalColor]), ""))
             if (id === "") { newCalPopup.close(); root.refresh(); return }
             var sch = []
             for (var i = 0; i < newCalSchemaModel.count; i++) {

@@ -41,7 +41,7 @@ QString MockLogos::callModule(const QString &mod, const QString &method, const Q
     if (method == "listEvents")
         return QString(R"([{"id":"e1","calendarId":"c1","title":"Opening night","startTime":%1,"endTime":%2,"fields":{"venue":"Club X","vip":true,"status":"confirmed"}}])")
             .arg(EV_START).arg(EV_END);
-    if (method == "createCalendar") return "cNEW"; // return a fake id so createNow proceeds to schema
+    if (method == "createCalendar") return "\"cNEW\""; // JSON-encoded id (like the real core) — must be j()-unwrapped
     if (method == "getIdentity") return "0xme00000000000000000000000000000000000000";
     if (method == "diagnostics")
         return QString(R"({"deliveryStatus":"Connected","ctxReady":true,"calendarCount":1,"eventCount":1,"identity":"0xme00000000000000000000000000000000000000","dataDir":"/tmp/scala","calendars":[]})");
