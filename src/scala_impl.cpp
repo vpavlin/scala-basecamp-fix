@@ -346,7 +346,10 @@ std::string ScalaImpl::listCalendars() {
                            {"schema", f.value("schema", json::array())},
                            {"owner", f.value("owner", std::string())},
                            {"roles", f.value("roles", json::object())},
-                           {"rolesConfigured", f.value("rolesConfigured", false)}});
+                           {"rolesConfigured", f.value("rolesConfigured", false)},
+                           // Surface the Open/Restricted flag so the view's toggle + canAddTo see it
+                           // (without this it reads `undefined` → always "open", and the toggle snaps back).
+                           {"open", f.value("open", true)}});
     }
     return arr.dump();
 }
