@@ -1,6 +1,6 @@
 # 4. Roles: opt-in, default-open, enforced on merge
 
-- **Status:** accepted
+- **Status:** accepted — **revised** to the two-rule model (see [Revision](#revision--two-rule-model-ownereditorviewer--open-toggle--edit-your-own) below)
 - **Date:** 2026-08-13
 
 ## Context

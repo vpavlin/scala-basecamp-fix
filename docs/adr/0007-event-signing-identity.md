@@ -26,9 +26,12 @@ What is **scala-specific**:
 - **Domain tag `scala-sig-v1`** in the canonical message.
 - **The fold gates on `verified`** (`scala_engine.hpp` / `engine.ts`, byte-parity): a
   *present-but-invalid* signature is dropped (tamper); an *unsigned* legacy event is
-  admitted but never counts as an authenticated author; in a **role-managed** calendar,
-  `event.put/del/cal.meta` and `member.set` require an **authenticated** owner/admin, while
-  an **open** calendar still admits anyone (signing gates roles, not writing).
+  admitted but never counts as an authenticated author. A **privileged** claim — a
+  `member.set` role grant, or an editor/owner acting under the two-rule model (ADR
+  [0004](0004-roles-opt-in.md)) — is honoured only when the event is **authenticated**;
+  a participant's own add/edit and an open-calendar write don't require a privileged claim.
+  So signing gates *authority*, not *writing*: it makes owner/editor/viewer and
+  edit-your-own real authorization rather than an unenforceable author claim.
 - **Keys:** private key in SecureStore (mobile) / the core kv store (desktop); the author
   id / SDS senderId / `hlc.dev` all become the address. Keypair gen uses expo-crypto /
   OpenSSL RAND (never @noble's RNG).

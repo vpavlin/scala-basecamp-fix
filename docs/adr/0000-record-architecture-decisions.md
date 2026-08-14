@@ -24,8 +24,9 @@ their own ADRs and are cross-referenced rather than restated:
 - [0001](0001-event-log-crdt.md) — Event-log CRDT + pure fold, not mutable rows
 - [0002](0002-adopt-logos-sync.md) — Adopt logos-sync (extract the sync spine)
 - [0003](0003-catch-up-recursive-rbsr.md) — Catch-up = recursive RBSR + reliable trigger
-- [0004](0004-roles-opt-in.md) — Roles: opt-in, default-open, enforced on merge
+- [0004](0004-roles-opt-in.md) — Roles enforced on merge (revised: two-rule model — owner/editor/viewer + Open toggle + edit-your-own)
 - [0005](0005-optional-field-schema.md) — Optional field-schema — calendar as a library
 - [0006](0006-two-clients-one-fold.md) — Two clients, one fold (C++ ↔ TS parity) + AES-GCM crypto
+- [0007](0007-event-signing-identity.md) — Adopt loam-sync event signing (roles become enforcement)
 
 Superseded planning docs are archived under [`../archive/`](../archive/).
