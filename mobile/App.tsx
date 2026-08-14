@@ -426,7 +426,7 @@ export default function App() {
                   </View>
                 )}
                 <Text style={[s.sub, { marginBottom: 6, marginTop: 8 }]}>
-                  {`Your role: ${calSet ? roleOf(calSet.cal) : ""}${roleOf(calSet!.cal) === "viewer" ? " — read-only." : "."}`}
+                  {calSet ? `Your role: ${roleOf(calSet.cal)}${roleOf(calSet.cal) === "viewer" ? " — read-only." : "."}` : ""}
                 </Text>
                 {members.map(([id, role]) => (
                   <View key={id} style={s.fieldRow}>
