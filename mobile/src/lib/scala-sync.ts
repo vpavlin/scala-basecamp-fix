@@ -1,5 +1,5 @@
 // Scala mobile sync — the CRDT event wire the desktop core (src/calendar_sync.cpp
-// sendEvent / handleReceive) speaks, carried over the shared logos-transport (SDS
+// sendEvent / handleReceive) speaks, carried over the shared loam-transport (SDS
 // Reliable Channels). Drops onto the same per-calendar channel the desktop listens
 // on.
 //
@@ -11,7 +11,7 @@
 //   • transport double-base64s the sealed bytes for the channel (publishSealed);
 //     on receive it hands candidate byte-arrays, we open() each with the
 //     calendar's key and take the first that authenticates.
-import * as transport from "./logos-transport";
+import * as transport from "./loam-transport";
 import { seal, open } from "./crypto";
 import { utf8Bytes, utf8Decode } from "./utf8";
 

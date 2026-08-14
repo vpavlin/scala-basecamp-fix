@@ -1,7 +1,7 @@
 // Scala calendar crypto — AES-256-GCM seal/open, byte-for-byte compatible with
 // the desktop core (src/calendar_sync.cpp seal()/open()).
 //
-// Wire format of the SEALED bytes (what logos-transport carries, per calendar):
+// Wire format of the SEALED bytes (what loam-transport carries, per calendar):
 //   nonce(12) || tag(16) || ciphertext        (AES-256-GCM, no AAD)
 //
 // KEY DERIVATION — must match the desktop EXACTLY (quirks included). Lives in

@@ -21,7 +21,7 @@
       "./plugins/withReleaseSigning",
       "expo-secure-store",
       "expo-camera",
-      "./src/lib/logos-transport-pkg/plugins/withDeliveryClient.js",
+      "./src/lib/loam-transport-pkg/plugins/withDeliveryClient.js",
       "@react-native-community/datetimepicker",
       "expo-notifications"
     ],
