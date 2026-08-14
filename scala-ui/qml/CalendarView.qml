@@ -470,6 +470,8 @@ Item {
     // ── event editor popup ─────────────────────────────────────────────────
     property var editingEvent: null       // null = creating
     property string editCalId: ""
+    property string lastCalId: ""           // remember last calendar an event was created in → preselect it
+    property var evCals: []                 // cached writable-calendar list for the event modal's picker (stable → currentIndex resolves)
     // Two-rule permissions (mirror the fold): owner/editors do anything; viewers read-only;
     // everyone else may ADD iff Open, and edit/delete only the events they authored.
     function isEditorMe(c) { if (!c) return true; if (c.owner === myIdentity) return true; var r = c.roles || {}; return r[myIdentity] === "editor" || r[myIdentity] === "admin" }
@@ -552,7 +554,11 @@ Item {
         var w = writableCalendars()
         if (w.length === 0) { newCalPopup.open(); return }
         editingEvent = null
-        editCalId = w[0].id
+        root.evCals = w
+        // Preselect the calendar you last added an event to (if still writable), else the first.
+        var pre = w[0].id
+        if (root.lastCalId !== "") { for (var k = 0; k < w.length; k++) if (w[k].id === root.lastCalId) { pre = root.lastCalId; break } }
+        editCalId = pre
         evHistory = []
         var start = new Date(selectedDay); start.setHours(9, 0, 0, 0)
         var end = new Date(selectedDay); end.setHours(10, 0, 0, 0)
@@ -567,6 +573,7 @@ Item {
     // load the real event (with its recurrence rule + true start date) by seriesId.
     function openEditEvent(occ) {
         var ev = occ
+        root.evCals = writableCalendars()
         if (occ && occ.seriesId) { var m = root.eventById(occ.seriesId); if (m) ev = m }
         editingEvent = ev
         editCalId = ev.calendarId
@@ -617,6 +624,8 @@ Item {
             if (recur) nv.recur = recur
             if (hasSchema) nv.fields = collectFieldVals(editCalId)
             core("createEvent", [editCalId, JSON.stringify(nv)])
+            root.lastCalId = editCalId       // preselect this calendar next time
+
         }
         eventPopup.close(); refresh()
     }
@@ -641,15 +650,15 @@ Item {
                 Layout.fillWidth: true
                 enabled: !root.editingEvent        // can't move an event to another calendar
                 opacity: enabled ? 1 : 0.6
-                model: root.writableCalendars()
+                model: root.evCals
                 textRole: "name"
                 currentIndex: {
-                    var m = root.writableCalendars()
+                    var m = root.evCals
                     for (var i = 0; i < m.length; i++) if (m[i].id === root.editCalId) return i
                     return -1
                 }
                 onActivated: function (index) {
-                    var m = root.writableCalendars()
+                    var m = root.evCals
                     if (index >= 0 && index < m.length) {
                         root.editCalId = m[index].id
                         // Re-seed custom fields for the newly-picked calendar — its schema
@@ -673,7 +682,7 @@ Item {
                     highlighted: evCalSelect.highlightedIndex === index
                     contentItem: RowLayout {
                         spacing: 6
-                        Rectangle { width: 10; height: 10; radius: 5; color: modelData.color || root.calColor(modelData.id); Layout.alignment: Qt.AlignVCenter }
+                        Rectangle { width: 10; height: 10; radius: 5; color: root.calColor(modelData.id); Layout.alignment: Qt.AlignVCenter }
                         LogosText { text: modelData.name || "(cal)"; color: Theme.palette.text; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
                     }
                     background: Rectangle { color: highlighted ? Theme.palette.backgroundSecondary : Theme.palette.backgroundElevated }
@@ -996,9 +1005,8 @@ Item {
     }
 
     // ── new-calendar popup ───────────────────────────────────────────────────
-    property string newCalColor: "#89b4fa"
+    property bool newCalOpen: true          // Open (anyone can add) vs Restricted at create time
     property string ncNewType: "text"   // staged field type in the new-calendar add-row
-    readonly property var presetColors: ["#a6e3a1","#89b4fa","#f9e2af","#f38ba8","#cba6f7","#94e2d5","#fab387","#74c7ec"]
     // Add a custom field to the NEW-calendar schema (mirrors addSchemaField).
     function addNcField() {
         var k = ncNewKey.text.trim()
@@ -1017,14 +1025,15 @@ Item {
         width: 500; modal: true; padding: Theme.spacing.large
         background: Rectangle { radius: Theme.spacing.radiusMedium; color: Theme.palette.backgroundElevated; border.width: 1; border.color: Theme.palette.borderHairline }
         onOpened: {
-            newCalName.text = ""; newCalDesc.text = ""; root.newCalColor = root.presetColors[1]
+            newCalName.text = ""; newCalDesc.text = ""; root.newCalOpen = true
             newCalSchemaModel.clear(); ncNewKey.text = ""; ncNewLabel.text = ""; ncNewOptions.text = ""; root.ncNewType = "text"
         }
         function createNow() {
             // core returns are double-JSON-encoded — unwrap with j() (like getIdentity/
             // listCalendars) or the id comes back quoted and updateCalendarMeta targets the
             // WRONG calendar, so description/custom-fields silently never save on create.
-            var id = String(root.j(root.core("createCalendar", [newCalName.text.trim(), root.newCalColor]), ""))
+            // Color is DERIVED from the calendar id (calColor), never chosen — pass "".
+            var id = String(root.j(root.core("createCalendar", [newCalName.text.trim(), ""]), ""))
             if (id === "") { newCalPopup.close(); root.refresh(); return }
             var sch = []
             for (var i = 0; i < newCalSchemaModel.count; i++) {
@@ -1035,7 +1044,13 @@ Item {
                 sch.push(e)
             }
             var d = newCalDesc.text.trim()
-            if (d !== "" || sch.length > 0) root.core("updateCalendarMeta", [id, JSON.stringify({ description: d, schema: sch })])
+            // Fold up the create-time meta in one cal.meta write. `open` only needs writing
+            // when Restricted (open defaults to true in the fold).
+            var meta = {}
+            if (d !== "") meta.description = d
+            if (sch.length > 0) meta.schema = sch
+            if (!root.newCalOpen) meta.open = false
+            if (Object.keys(meta).length > 0) root.core("updateCalendarMeta", [id, JSON.stringify(meta)])
             newCalPopup.close(); root.refresh()
         }
         ColumnLayout {
@@ -1058,19 +1073,6 @@ Item {
 
                     LogosText { text: "Description"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
                     Field { id: newCalDesc; Layout.fillWidth: true; placeholderText: "Optional description" }
-
-                    LogosText { text: "Color"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
-                    Flow {
-                        Layout.fillWidth: true; spacing: 8
-                        Repeater {
-                            model: root.presetColors
-                            delegate: Rectangle {
-                                width: 28; height: 28; radius: 14; color: modelData
-                                border.width: root.newCalColor === modelData ? 3 : 0; border.color: Theme.palette.text
-                                MouseArea { anchors.fill: parent; onClicked: root.newCalColor = modelData }
-                            }
-                        }
-                    }
 
                     Rectangle { Layout.fillWidth: true; height: 1; color: Theme.palette.borderHairline; Layout.topMargin: 4 }
 
@@ -1123,6 +1125,21 @@ Item {
 
                     ListModel { id: newCalSchemaModel }
                 }
+            }
+
+            // Open vs Restricted — who may ADD events (editors always can; everyone can edit
+            // only their own). Default Open; flip before Create for a locked-down calendar.
+            RowLayout {
+                Layout.fillWidth: true; Layout.topMargin: Theme.spacing.small
+                ColumnLayout {
+                    Layout.fillWidth: true; spacing: 0
+                    LogosText { text: "Open — anyone can add events"; color: Theme.palette.text; font.pixelSize: 13 }
+                    LogosText {
+                        text: root.newCalOpen ? "Anyone you invite can add events." : "Only editors can add; others edit only their own."
+                        color: Theme.palette.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap
+                    }
+                }
+                Switch { checked: root.newCalOpen; onToggled: root.newCalOpen = checked }
             }
 
             RowLayout {

@@ -300,7 +300,7 @@ std::string ScalaImpl::createCalendar(const std::string& name, const std::string
     publishAndApply(id, mkEvent(scala::ET::CAL_META, json{{"name", name}, {"color", color}}));
     return id;
 }
-// #7/#8: edit shared calendar metadata — {name?,color?,description?,schema?} (LWW cal.meta).
+// #7/#8: edit shared calendar metadata — {name?,color?,description?,schema?,open?} (LWW cal.meta).
 bool ScalaImpl::updateCalendarMeta(const std::string& calId, const std::string& fieldsJson) {
     json in = json::parse(fieldsJson, nullptr, false);
     if (in.is_discarded() || !in.is_object()) return false;
@@ -308,6 +308,7 @@ bool ScalaImpl::updateCalendarMeta(const std::string& calId, const std::string& 
     for (const char* k : {"name", "color", "description"})
         if (in.contains(k) && in[k].is_string()) p[k] = in[k];
     if (in.contains("schema") && in["schema"].is_array()) p["schema"] = in["schema"];
+    if (in.contains("open") && in["open"].is_boolean()) p["open"] = in["open"];  // Open/Restricted toggle (two-rule perms)
     if (p.empty()) return false;
     publishAndApply(calId, mkEvent(scala::ET::CAL_META, p));
     return true;
