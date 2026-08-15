@@ -185,46 +185,50 @@ void ScalaImpl::onContextReady() {
     using LogosMap = nlohmann::json;
     using Tx = logos_transport::Transport<LogosMap>;
 
-    // ASYNC delivery ops (qaku/kym pattern — sync calls block the event-loop thread
-    // on the 20s IPC timeout and leave the node never-ready).
+    // Route the Transport through the loam_core FACADE instead of delivery_module directly (ADR
+    // 0015). loam_core.start() does createNode+start together and returns EARLY, so node readiness
+    // arrives via statusChanged("Connected") — we latch the createNode cb on the first Connected.
+    // The double-b64 wire is byte-identical to the direct-delivery path (loam_core's delivery
+    // bearer re-applies the same framing), so scala<->scala and scala<->mobile interop hold; and
+    // every write also fans onto the ble_mesh bearer, deduped by frameId. (loam_core methods
+    // return a status string, so these callbacks take std::string, not StdLogosResult.)
     Tx::Ops ops;
     ops.createNode = [this](const std::string& cfg, Tx::Cb cb) {
-        modules().delivery_module.createNodeAsync(cfg, [cb](auto r) {
-            fprintf(stderr, "[scala] createNode success=%d error=%s\n", (int)r.success, r.error.c_str());
-            cb(r.success, r.error); });
+        modules().loam_core.setSenderIdAsync(m_identity.empty() ? std::string("scala-default") : m_identity,
+                                             [](std::string) {});
+        auto fired = std::make_shared<bool>(false);
+        modules().loam_core.onStatusChanged([cb, fired](const std::string& s) {
+            if (s == "Connected" && !*fired) { *fired = true; cb(true, ""); }
+        });
+        modules().loam_core.startAsync(cfg, [](std::string err) {
+            if (!err.empty()) fprintf(stderr, "[scala] loam_core.start: %s\n", err.c_str());
+        });
     };
-    ops.start = [this](Tx::Cb cb) {
-        modules().delivery_module.startAsync([cb](auto r) {
-            fprintf(stderr, "[scala] start success=%d error=%s\n", (int)r.success, r.error.c_str());
-            cb(r.success, r.error); });
-    };
+    ops.start = [this](Tx::Cb cb) { cb(true, ""); };   // loam_core.start already did createNode+start
     ops.subscribe = [this](const std::string& t, Tx::Cb cb) {
-        modules().delivery_module.subscribeAsync(t, [cb](auto r) { cb(r.success, r.error); });
+        modules().loam_core.joinAsync(t, [cb](std::string) { cb(true, ""); });
     };
-    ops.channelCreate = [this](const std::string& id, const std::string& ct, const std::string& sid, Tx::Cb cb) {
-        modules().delivery_module.channelCreateAsync(id, ct, sid, [cb](auto r) { cb(r.success, r.error); });
+    ops.channelCreate = [this](const std::string&, const std::string&, const std::string&, Tx::Cb cb) {
+        cb(true, "");   // loam_core.join() already subscribes + creates the SDS channel with our senderId
     };
     ops.channelSend = [this](const std::string& id, const LogosMap& payload, Tx::Cb cb) {
-        // Pass the LogosMap payload STRAIGHT THROUGH, exactly as qaku_core does
-        // (qaku_core_impl.cpp channelSendAsync(topic, p, …)). `payload` is the byte-array
-        // LogosMap from bytesPayload(b64) = [65,66,…]; the module serializes it to those
-        // raw bytes. The old `payload.dump()` serialized it to the JSON TEXT "[65,66,…]"
-        // and sent THAT — so every desktop/hub message was undecodable garbage on the
-        // wire (mobile received nothing). Never dump(); hand the module the payload.
-        modules().delivery_module.channelSendAsync(id, payload, [cb](auto r) { cb(r.success, r.error); });
+        // `payload` is bytesPayload(b64) — a byte-ARRAY LogosMap of the b64 string (or a string in
+        // the string repr). Recover the b64 and hand it to loam_core.sendSealed, which re-applies
+        // the same double-b64 wire and fans to every bearer.
+        std::string b64;
+        if (payload.is_string()) b64 = payload.get<std::string>();
+        else if (payload.is_array()) { for (const auto& c : payload) if (c.is_number_integer()) b64.push_back((char)c.get<int>()); }
+        modules().loam_core.sendSealedAsync(id, b64, [cb](std::string) { cb(true, ""); });
     };
     ops.onMessage = [this](Tx::RecvCb handler) {
-        modules().delivery_module.onMessageReceived(
-            [handler](const std::string&, const std::string& topic, const std::vector<uint8_t>& p, int64_t) {
-                std::string s(p.begin(), p.end()); LogosMap j = LogosMap::parse(s, nullptr, false);
-                if (j.is_discarded()) j = s; handler(topic, j); });
+        // loam_core hands payloadB64 = b64(<what we sent>); wrap it as a JSON STRING LogosMap so the
+        // Transport's toWire() returns it and decodes once — identical to the delivery path.
+        modules().loam_core.onReceived(
+            [handler](const std::string& topic, const std::string&, const std::string& payloadB64, int64_t) {
+                handler(topic, LogosMap(payloadB64));
+            });
     };
-    ops.onChannelMessage = [this](Tx::RecvCb handler) {
-        modules().delivery_module.onChannelMessageReceived(
-            [handler](const std::string& cid, const std::string&, const std::vector<uint8_t>& p, int64_t) {
-                std::string s(p.begin(), p.end()); LogosMap j = LogosMap::parse(s, nullptr, false);
-                if (j.is_discarded()) j = s; handler(cid, j); });
-    };
+    ops.onChannelMessage = [this](Tx::RecvCb) { /* loam_core.onReceived covers both — avoid double-deliver */ };
 
     Tx tx(std::move(ops),
           Tx::Config{

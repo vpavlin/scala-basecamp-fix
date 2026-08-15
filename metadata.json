@@ -9,7 +9,7 @@
   "main": "scala_plugin",
   "interface": "universal",
   "dependencies": [
-    "delivery_module"
+    "loam_core"
   ],
   "nix": {
     "packages": {
