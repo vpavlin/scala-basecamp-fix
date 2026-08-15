@@ -16,6 +16,7 @@ import { FieldDef } from "./src/components/EventModal";
 
 const FIELD_TYPES = ["text", "longtext", "number", "date", "datetime", "bool", "url", "enum", "color"];
 import { deliveryAvailable, getDebug, refreshDebug } from "./src/lib/scala-sync";
+import { SharedNodeStatus } from "./src/lib/loam-transport-pkg/src/SharedNodeStatus";
 import { ensureNotifyPermission, scheduleReminders } from "./src/lib/notify";
 import { MonthGrid } from "./src/components/MonthGrid";
 import { expandEvents } from "./src/lib/recur";
@@ -259,6 +260,8 @@ export default function App() {
         <Pressable onPress={() => setDbg({ ...getDebug(), t: Date.now() })}>
           <Text style={s.status}>{status} · {cals.length} calendar(s) · <Text style={{ textDecorationLine: "underline" }}>debug</Text></Text>
         </Pressable>
+
+        <SharedNodeStatus appName="Scala" style={{ marginHorizontal: 14 }} />
 
         <View style={s.grid}>
           <MonthGrid
