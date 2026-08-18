@@ -12,8 +12,12 @@ import { canonicalMessage, hex } from "../identity";
 import { utf8Bytes } from "../utf8";
 import { createKeycardSession, type KCState } from "./session";
 
-// One session for scala; SecureStore keys namespaced scala-keycard-address/pubhex/pairing.
-const kc = createKeycardSession({ storagePrefix: "scala-keycard", defaultPairing: "KeycardDefaultPairing" });
+// One session for scala. The card signs at domainToSignPath("scala") = m/43'/60'/1582'/… so the
+// SAME physical card is the SAME identity here (NFC) and in Basecamp's keycard module via
+// requestSign({domain:"scala"}) (PC/SC) — a card calendar is then writable from phone AND desktop.
+// storagePrefix bumped to -v2: the signing path changed → the derived address changed → any card
+// enrolled under the old path must be RE-ENROLLED (old card-owned calendars are orphaned).
+const kc = createKeycardSession({ storagePrefix: "scala-keycard-v2", defaultPairing: "KeycardDefaultPairing", signingDomain: "scala" });
 
 export type { KCState };
 export function setPinProvider(fn: (() => Promise<string | null>) | null): void { kc.setPinProvider(fn); }

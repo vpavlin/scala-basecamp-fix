@@ -16,6 +16,7 @@
 import * as SecureStore from "expo-secure-store";
 import { sha256 } from "@noble/hashes/sha256";
 import { signDigestOnCard } from "./keycard";
+import { domainToSignPath } from "./paths";
 
 export type KCState = "idle" | "tap";
 export interface KeycardEnrollment { address: string; pubHex: string }
@@ -25,6 +26,15 @@ export interface KeycardSessionOpts {
   storagePrefix: string;
   /** Pairing password used until the user enrols their own. */
   defaultPairing?: string;
+  /**
+   * App domain → the card signs at domainToSignPath(domain) = m/43'/60'/1582'/…, so the same card
+   * yields the SAME identity here and in Basecamp's keycard module `requestSign({domain})`. Omit
+   * for the legacy fixed path (m/44'/60'/0'/0). Changing this changes the derived address → users
+   * must re-enrol (bump storagePrefix to force a clean re-enrol).
+   */
+  signingDomain?: string;
+  /** Explicit BIP32 path override; takes precedence over signingDomain. */
+  signingPath?: string;
 }
 
 const HEXC = "0123456789abcdef";
@@ -55,6 +65,8 @@ export function createKeycardSession(opts: KeycardSessionOpts): KeycardSession {
   const PUB_KEY = opts.storagePrefix + "-pubhex";
   const PAIR_KEY = opts.storagePrefix + "-pairing";
   const DEFAULT_PAIRING = opts.defaultPairing ?? "KeycardDefaultPairing";
+  // The BIP32 path the card signs at (enroll + every sign). undefined → driver's legacy default.
+  const signPath: string | undefined = opts.signingPath ?? (opts.signingDomain ? domainToSignPath(opts.signingDomain) : undefined);
 
   let enrolled: KeycardEnrollment | null = null;
   let pairingPw = DEFAULT_PAIRING;
@@ -107,7 +119,7 @@ export function createKeycardSession(opts: KeycardSessionOpts): KeycardSession {
     async enroll(pin, pairing) {
       setState("tap");
       try {
-        const sig = await signDigestOnCard(sha256(utf8("loam-keycard-enroll-v1")), { pin, pairingPassword: pairing });
+        const sig = await signDigestOnCard(sha256(utf8("loam-keycard-enroll-v1")), { pin, pairingPassword: pairing, path: signPath });
         enrolled = { address: addressForPub(sig.pubCompressed), pubHex: hex(sig.pubCompressed) };
         pairingPw = pairing; sessionPin = pin; loaded = true;
         await SecureStore.setItemAsync(ADDR_KEY, enrolled.address);
@@ -122,7 +134,7 @@ export function createKeycardSession(opts: KeycardSessionOpts): KeycardSession {
       const pin = await ensurePin();
       setState("tap");
       try {
-        const sig = await signDigestOnCard(digest32, { pin, pairingPassword: pairingPw });
+        const sig = await signDigestOnCard(digest32, { pin, pairingPassword: pairingPw, path: signPath });
         return { compact: sig.compact, pubCompressed: sig.pubCompressed, pubHex: enrolled.pubHex, address: enrolled.address };
       } catch (e: any) {
         if (/pin/i.test(String((e && e.message) || e))) sessionPin = null; // wrong PIN → re-prompt next time
