@@ -213,7 +213,16 @@ export async function deleteEvent(ev: CalEvent): Promise<void> {
 // registers membership, starts syncing, and publishes a cal.meta event. The
 // invite (buildInvite) carries name+key so a joiner gets metadata even before the
 // first cal.meta event reaches them.
-export async function createCalendar(name: string, color = "#89b4fa", description = "", identityId?: string): Promise<Calendar> {
+export async function createCalendar(
+  name: string,
+  color = "#89b4fa",
+  description = "",
+  identityId?: string,
+  // Extra meta set AT CREATE so the full form is one signed cal.meta (one Keycard tap), not
+  // create-then-edit. schema = custom fields; open = anyone-with-invite-can-add; signaturesRequired
+  // = fold drops unsigned writes.
+  opts?: { schema?: any[]; open?: boolean; signaturesRequired?: boolean },
+): Promise<Calendar> {
   const id = Crypto.randomUUID();
   const encryptionKey = Crypto.randomUUID() + Crypto.randomUUID();
   const nm = name.trim() || "My calendar";
@@ -225,6 +234,9 @@ export async function createCalendar(name: string, color = "#89b4fa", descriptio
   await sync.joinCalendar(id, encryptionKey);
   const meta: any = { name: nm, color };
   if (description.trim()) meta.description = description.trim();
+  if (opts?.schema && opts.schema.length) meta.schema = opts.schema;
+  if (opts?.open !== undefined) meta.open = opts.open;
+  if (opts?.signaturesRequired) meta.signaturesRequired = true;
   await publishAndApply(id, await mkEvent(ET.CAL_META, meta, id));
   notifyChange();
   return { id, name: nm, color, isShared: true, encryptionKey, creatorId: author };

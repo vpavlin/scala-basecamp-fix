@@ -60,6 +60,9 @@ export default function App() {
   const [newCalIdentity, setNewCalIdentity] = useState("");   // which identity authors the new calendar
   const [identities, setIdentities] = useState<{ id: string; kind: string; label: string; address: string }[]>([]);
   const [newCalOpen, setNewCalOpen] = useState(false);        // full "new calendar" form modal
+  const [newCalSchema, setNewCalSchema] = useState<FieldDef[]>([]); // custom fields, set at create
+  const [newCalCanAdd, setNewCalCanAdd] = useState(true);     // "Open — anyone can add" (default on)
+  const [newCalSigReq, setNewCalSigReq] = useState(false);    // signatures-required, set at create
   const [joinIdentity, setJoinIdentity] = useState("");       // identity to author my events on a joined calendar
   const [calSetIdentity, setCalSetIdentity] = useState("");   // the open calendar-settings sheet's bound identity
   const [currentCalId, setCurrentCalId] = useState<string>("");     // #5: last-tapped calendar (preselected for new events)
@@ -255,11 +258,24 @@ export default function App() {
     try { await deleteEvent(modal.editing); setModal((m) => ({ ...m, open: false })); } catch (e: any) { onKeycardAbort(e, () => removeEvent()); }
   };
 
+  // Custom-field editing for the NEW-calendar form (mirrors settings' addField/removeField, staged
+  // in newCalSchema and written into the single cal.meta on Create). Reuses the `nf` input.
+  const addNewCalField = () => {
+    const key = nf.key.trim().replace(/\s+/g, "_");
+    if (!key) return;
+    if (newCalSchema.some((f) => f.key === key)) { Alert.alert("Field exists", `"${key}" is already defined.`); return; }
+    setNewCalSchema((v) => [...v, { key, label: nf.label.trim() || key, type: nf.type }]);
+    setNf({ key: "", label: "", type: "text" });
+  };
+  const removeNewCalField = (key: string) => setNewCalSchema((v) => v.filter((f) => f.key !== key));
   const doCreateCal = async () => {
     try {
-      const cal = await createCalendar(newCalName || "My calendar", "#89b4fa", newCalDesc, newCalIdentity || undefined);
+      const cal = await createCalendar(newCalName || "My calendar", "#89b4fa", newCalDesc, newCalIdentity || undefined,
+        { schema: newCalSchema, open: newCalCanAdd, signaturesRequired: newCalSigReq });
       setNewCalOpen(false);
-      setNewCalName(""); setNewCalDesc(""); setCurrentCalId(cal.id); setLastInvite(buildInvite(cal));
+      setNewCalName(""); setNewCalDesc(""); setNewCalSchema([]); setNewCalCanAdd(true); setNewCalSigReq(false);
+      setNf({ key: "", label: "", type: "text" });
+      setCurrentCalId(cal.id); setLastInvite(buildInvite(cal));
       await startSyncing(undefined, setStatus);
       setQr({ value: buildInvite(cal), title: cal.name }); // show the QR right away
     } catch (e: any) { onKeycardAbort(e, () => doCreateCal()); }
@@ -378,7 +394,7 @@ export default function App() {
                 </Pressable>
               ))}
 
-              <Pressable style={[s.smBtn, { marginTop: 4, alignItems: "center" }]} onPress={() => { setNewCalName(""); setNewCalDesc(""); setNewCalOpen(true); }}>
+              <Pressable style={[s.smBtn, { marginTop: 4, alignItems: "center" }]} onPress={() => { setNewCalName(""); setNewCalDesc(""); setNewCalSchema([]); setNewCalCanAdd(true); setNewCalSigReq(false); setNf({ key: "", label: "", type: "text" }); setNewCalOpen(true); }}>
                 <Text style={s.smBtnT}>+ New calendar</Text>
               </Pressable>
 
@@ -534,27 +550,72 @@ export default function App() {
         </Modal>
 
         <Modal visible={newCalOpen} transparent animationType="slide" onRequestClose={() => setNewCalOpen(false)}>
-          <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "flex-end" }}>
-            <View style={{ backgroundColor: C.bg, borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 20, paddingBottom: 36 }}>
-              <Text style={{ color: C.text, fontSize: 18, fontWeight: "700", marginBottom: 14 }}>New calendar</Text>
-              <TextInput style={s.input} value={newCalName} onChangeText={setNewCalName} placeholder="Name" placeholderTextColor={C.sub} autoFocus />
-              <TextInput style={[s.input, { marginTop: 10 }]} value={newCalDesc} onChangeText={setNewCalDesc} placeholder="Description (optional)" placeholderTextColor={C.sub} />
-              <Text style={[s.pLabel, { marginTop: 14 }]}>Author as</Text>
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
-                {identities.map((m) => (
-                  <Pressable key={m.id} onPress={() => setNewCalIdentity(m.id)}
-                    style={{ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 14, backgroundColor: newCalIdentity === m.id ? C.primary : C.surface, borderWidth: 1, borderColor: newCalIdentity === m.id ? C.primary : C.border }}>
-                    <Text style={{ color: newCalIdentity === m.id ? "#1e1e2e" : C.text, fontWeight: "600" }}>{m.label}{m.kind === "keycard" ? " 🔑" : ""}</Text>
-                  </Pressable>
+          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "flex-end" }}>
+            <View style={{ backgroundColor: C.bg, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: "90%" }}>
+              <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 36 }} keyboardShouldPersistTaps="handled">
+                <Text style={{ color: C.text, fontSize: 18, fontWeight: "700", marginBottom: 14 }}>New calendar</Text>
+                <TextInput style={s.input} value={newCalName} onChangeText={setNewCalName} placeholder="Name" placeholderTextColor={C.sub} autoFocus />
+                <TextInput style={[s.input, { marginTop: 10 }]} value={newCalDesc} onChangeText={setNewCalDesc} placeholder="Description (optional)" placeholderTextColor={C.sub} />
+                <Text style={[s.pLabel, { marginTop: 14 }]}>Author as</Text>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
+                  {identities.map((m) => (
+                    <Pressable key={m.id} onPress={() => setNewCalIdentity(m.id)}
+                      style={{ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 14, backgroundColor: newCalIdentity === m.id ? C.primary : C.surface, borderWidth: 1, borderColor: newCalIdentity === m.id ? C.primary : C.border }}>
+                      <Text style={{ color: newCalIdentity === m.id ? "#1e1e2e" : C.text, fontWeight: "600" }}>{m.label}{m.kind === "keycard" ? " 🔑" : ""}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <Text style={[s.sub, { marginTop: 8 }]}>This identity owns the calendar and signs its events. A Keycard calendar asks for your PIN + a tap.</Text>
+
+                {/* Custom fields — same editor as settings; staged into the single cal.meta so the
+                    calendar is complete on Create (a Keycard create is one tap, not create-then-edit). */}
+                <Text style={s.pLabel}>Custom fields</Text>
+                {newCalSchema.length === 0 && <Text style={[s.sub, { marginBottom: 6 }]}>None — a plain calendar. Add fields to capture more per event.</Text>}
+                {newCalSchema.map((f) => (
+                  <View key={f.key} style={s.fieldRow}>
+                    <Text style={{ color: C.text, flex: 1 }}>{f.label || f.key} <Text style={{ color: C.sub, fontSize: 12 }}>· {f.type}</Text></Text>
+                    <Pressable onPress={() => removeNewCalField(f.key)} hitSlop={8}><Text style={{ color: C.danger, fontSize: 18 }}>×</Text></Pressable>
+                  </View>
                 ))}
-              </View>
-              <Text style={[s.sub, { marginTop: 8 }]}>This identity owns the calendar and signs its events. A Keycard calendar asks for your PIN + a tap.</Text>
-              <View style={{ flexDirection: "row", gap: 12, marginTop: 20, justifyContent: "flex-end" }}>
-                <Pressable style={[s.smBtn, { backgroundColor: C.surface }]} onPress={() => setNewCalOpen(false)}><Text style={s.smBtnT}>Cancel</Text></Pressable>
-                <Pressable style={s.smBtn} onPress={doCreateCal}><Text style={s.smBtnT}>Create</Text></Pressable>
-              </View>
+                <View style={s.row2}>
+                  <TextInput style={[s.input, { flex: 1 }]} value={nf.key} onChangeText={(t) => setNf((v) => ({ ...v, key: t }))} placeholder="key" placeholderTextColor={C.sub} autoCapitalize="none" />
+                  <TextInput style={[s.input, { flex: 1 }]} value={nf.label} onChangeText={(t) => setNf((v) => ({ ...v, label: t }))} placeholder="Label" placeholderTextColor={C.sub} />
+                </View>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 6 }}>
+                  <View style={{ flexDirection: "row", gap: 6 }}>
+                    {FIELD_TYPES.map((t) => (
+                      <Pressable key={t} onPress={() => setNf((v) => ({ ...v, type: t }))} style={[s.typeChip, nf.type === t && s.typeChipOn]}>
+                        <Text style={[s.typeChipT, nf.type === t && { color: C.bg }]}>{t}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </ScrollView>
+                <Pressable style={[s.smBtn, { marginTop: 8, alignItems: "center", backgroundColor: C.surface, borderWidth: 1, borderColor: C.border }]} onPress={addNewCalField}><Text style={[s.smBtnT, { color: C.text }]}>+ Add field</Text></Pressable>
+
+                {/* Open + signatures-required — same toggles as settings, chosen up front. */}
+                <Text style={s.pLabel}>Access</Text>
+                <View style={s.rowBetween}>
+                  <View style={{ flex: 1, paddingRight: 10 }}>
+                    <Text style={{ color: C.text }}>Open — anyone can add events</Text>
+                    <Text style={s.sub}>Off = only editors can add. Everyone can still edit only the events they created.</Text>
+                  </View>
+                  <Switch value={newCalCanAdd} onValueChange={setNewCalCanAdd} trackColor={{ true: C.primary, false: C.border }} thumbColor="#fff" />
+                </View>
+                <View style={s.rowBetween}>
+                  <View style={{ flex: 1, paddingRight: 10 }}>
+                    <Text style={{ color: C.text }}>🔒 Signatures required</Text>
+                    <Text style={s.sub}>On = the fold DROPS any unsigned event — only signed writes count. Pair with a Keycard identity for "only my card can write here". Enforced on mobile + desktop.</Text>
+                  </View>
+                  <Switch value={newCalSigReq} onValueChange={setNewCalSigReq} trackColor={{ true: C.accent, false: C.border }} thumbColor="#fff" />
+                </View>
+
+                <View style={{ flexDirection: "row", gap: 12, marginTop: 20, justifyContent: "flex-end" }}>
+                  <Pressable style={[s.smBtn, { backgroundColor: C.surface }]} onPress={() => setNewCalOpen(false)}><Text style={s.smBtnT}>Cancel</Text></Pressable>
+                  <Pressable style={s.smBtn} onPress={doCreateCal}><Text style={s.smBtnT}>Create</Text></Pressable>
+                </View>
+              </ScrollView>
             </View>
-          </View>
+          </KeyboardAvoidingView>
         </Modal>
         <QRModal visible={!!qr} value={qr?.value || ""} title={qr?.title || "Invite"} onClose={() => setQr(null)} />
         <ScanModal visible={scanning} onScanned={onScanned} onClose={() => setScanning(false)} />
