@@ -481,6 +481,20 @@ Item {
     // Event editor read-only: a NEW event needs add rights; an EXISTING event needs edit
     // rights on THAT event (yours, or you're an editor). Reactive to editCalId/editingEvent.
     readonly property bool eventReadOnly: editingEvent ? !canEditEvent(calById(editCalId), editingEvent) : !canAddTo(calById(editCalId))
+    // Human "why can't I edit this" (ADR 0013). Desktop is single-identity, so the signing address
+    // is myIdentity; when desktop gains per-calendar identities, resolve the bound one here.
+    function readonlyReason(c, ev) {
+        if (!c) return ""
+        var a = myIdentity
+        if (isViewerMe(c)) return "You're a viewer on \"" + c.name + "\" — read-only."
+        if (ev && ev.creatorId && !isEditorMe(c) && ev.creatorId !== a)
+            return "Only the author can edit this event (created by " + shortAuthor(ev.creatorId) + "). You're signing as " + shortAuthor(a) + "."
+        if (c.owner && a !== c.owner && !isEditorMe(c))
+            return "This calendar is owned by " + shortAuthor(c.owner) + ", but you're signing as " + shortAuthor(a) + ". If that owner was a Keycard re-enrolled at a new path, its address changed and this calendar is orphaned — make a new one, or bind an identity that owns/edits it."
+        if (c.open === false && !isEditorMe(c))
+            return "\"" + c.name + "\" is closed — only its owner/editors can add events. You're signing as " + shortAuthor(a) + "."
+        return "You can't write to \"" + c.name + "\" as " + shortAuthor(a) + "."
+    }
     // Inline validation — empty string == valid. Bound to the Save button + an error line.
     function eventError() {
         if (evTitle.text.trim() === "") return "Title is required."
@@ -889,6 +903,22 @@ Item {
                 text: root.eventError()
                 color: Theme.palette.warning; font.pixelSize: 12; wrapMode: Text.WordWrap; Layout.fillWidth: true
             }
+            // Read-only reason (ADR 0013): say WHY you can't edit instead of a silent locked form.
+            Rectangle {
+                visible: root.eventReadOnly
+                Layout.fillWidth: true; radius: Theme.spacing.radiusSmall
+                color: Qt.rgba(0.98, 0.89, 0.55, 0.10); border.width: 1; border.color: Theme.palette.warning
+                implicitHeight: roLabel.implicitHeight + 2 * Theme.spacing.small
+                ColumnLayout {
+                    anchors.fill: parent; anchors.margins: Theme.spacing.small; spacing: 2
+                    LogosText { text: "🔒 Read-only"; color: Theme.palette.warning; font.pixelSize: 12; font.weight: Theme.typography.weightMedium }
+                    LogosText {
+                        id: roLabel
+                        text: root.readonlyReason(root.calById(root.editCalId), root.editingEvent)
+                        color: Theme.palette.warning; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true
+                    }
+                }
+            }
             RowLayout {
                 Layout.fillWidth: true; Layout.topMargin: Theme.spacing.small; spacing: Theme.spacing.small
                 LogosButton { visible: root.editingEvent !== null && !root.eventReadOnly; text: "Delete"; onClicked: root.deleteEvent() }
@@ -1006,6 +1036,7 @@ Item {
 
     // ── new-calendar popup ───────────────────────────────────────────────────
     property bool newCalOpen: true          // Open (anyone can add) vs Restricted at create time
+    property bool newCalSigReq: false       // signatures-required (fold drops unsigned) at create time
     property string ncNewType: "text"   // staged field type in the new-calendar add-row
     // Add a custom field to the NEW-calendar schema (mirrors addSchemaField).
     function addNcField() {
@@ -1025,7 +1056,7 @@ Item {
         width: 500; modal: true; padding: Theme.spacing.large
         background: Rectangle { radius: Theme.spacing.radiusMedium; color: Theme.palette.backgroundElevated; border.width: 1; border.color: Theme.palette.borderHairline }
         onOpened: {
-            newCalName.text = ""; newCalDesc.text = ""; root.newCalOpen = true
+            newCalName.text = ""; newCalDesc.text = ""; root.newCalOpen = true; root.newCalSigReq = false
             newCalSchemaModel.clear(); ncNewKey.text = ""; ncNewLabel.text = ""; ncNewOptions.text = ""; root.ncNewType = "text"
         }
         function createNow() {
@@ -1050,6 +1081,7 @@ Item {
             if (d !== "") meta.description = d
             if (sch.length > 0) meta.schema = sch
             if (!root.newCalOpen) meta.open = false
+            if (root.newCalSigReq) meta.signaturesRequired = true
             if (Object.keys(meta).length > 0) root.core("updateCalendarMeta", [id, JSON.stringify(meta)])
             newCalPopup.close(); root.refresh()
         }
@@ -1140,6 +1172,21 @@ Item {
                     }
                 }
                 Switch { checked: root.newCalOpen; onToggled: root.newCalOpen = checked }
+            }
+
+            // Signatures-required — the fold DROPS any unsigned event (ADR 0015). The core enforces
+            // this on both clients (scala_engine.hpp / engine.ts parity, core >= 0.8.5).
+            RowLayout {
+                Layout.fillWidth: true; Layout.topMargin: Theme.spacing.small
+                ColumnLayout {
+                    Layout.fillWidth: true; spacing: 0
+                    LogosText { text: "🔒 Signatures required"; color: Theme.palette.text; font.pixelSize: 13 }
+                    LogosText {
+                        text: "On = only signed writes count; unsigned events are dropped. Enforced on mobile + desktop."
+                        color: Theme.palette.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap
+                    }
+                }
+                Switch { checked: root.newCalSigReq; onToggled: root.newCalSigReq = checked }
             }
 
             RowLayout {
@@ -1336,6 +1383,20 @@ Item {
                         Switch {
                             checked: { var c = root.calById(root.setCalId); return !c || c.open !== false }
                             onToggled: { root.core("updateCalendarMeta", [root.setCalId, JSON.stringify({ open: checked })]); root.refresh() }
+                        }
+                    }
+                    // Signatures-required (ADR 0015): the fold drops any unsigned event. Owner/editor only.
+                    RowLayout {
+                        visible: root.canManage(root.setCalId)
+                        Layout.fillWidth: true; spacing: Theme.spacing.small
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            LogosText { text: "🔒 Signatures required"; color: Theme.palette.text; font.pixelSize: 13 }
+                            LogosText { text: "On = the fold DROPS any unsigned event — only signed writes count. Enforced on mobile + desktop."; color: Theme.palette.textTertiary; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                        }
+                        Switch {
+                            checked: { var c = root.calById(root.setCalId); return !!c && c.signaturesRequired === true }
+                            onToggled: { root.core("updateCalendarMeta", [root.setCalId, JSON.stringify({ signaturesRequired: checked })]); root.refresh() }
                         }
                     }
                     LogosText {
