@@ -5,9 +5,9 @@
 //   1. r/s come as minimal-length big-endian → left-pad each to 32 (→ 64-byte compact r‖s)
 //   2. s may be high-S → normalize to low-S (n - s) for canonical/OpenSSL-compatible sigs
 //   3. the public key is uncompressed 65-byte 0x04… → compress to 33-byte for address/verify
-// Iteration 1: a self-contained probe (sign a fixed digest, verify under @noble). Iteration 2
-// wires this as a logos-sync AsyncSigner into scala's event authoring. Lives in scala today,
-// destined for a standalone loam-keycard package (sibling to loam-transport).
+// The raw, app-agnostic card driver. VENDORED from the loam-keycard package
+// (github.com/vpavlin/loam-keycard, src/keycard.ts) — keep in sync; don't fork app logic in here.
+// Custody/session lives in session.ts; scala's event mapping in scala-signer.ts.
 import RNKeycard from "react-native-keycard";
 import { KeycardManager, LOADED } from "keycard-sdk/dist/keycard-manager";
 import type { Commandset } from "keycard-sdk/dist/commandset";
