@@ -166,6 +166,10 @@ export default function App() {
       return `"${c.name}" is closed — only its owner/editors can add events. You're signing as ${shortA(a)}.`;
     return `You can't write to "${c.name}" as ${shortA(a)}.`;
   }, [addrFor, isEditorMe, isViewerMe]);
+  // Calendars you can actually add events to (skip read-only / orphaned-owner) — for the + button
+  // and the new-event calendar picker. Falls back to all writable if none qualify.
+  const addableCals = useMemo(() => writable.filter((c) => canAddTo(c)), [writable, canAddTo]);
+  const pickCals = addableCals.length ? addableCals : writable;
   const openCalSettings = (c: Calendar) => {
     setNf({ key: "", label: "", type: "text" }); setNm({ id: "", role: "editor" });
     setCalSet({ cal: c, name: c.name, desc: c.description || "", alias: aliasMap[c.id] || "", schema: c.schema ? [...c.schema] : [] });
@@ -260,9 +264,7 @@ export default function App() {
     if (writable.length === 0) { Alert.alert("No calendar", "Create or join a calendar first."); setDrawer(true); return; }
     // #5: default to the calendar you last tapped; prefer one you can actually add to (skip
     // read-only / orphaned-owner calendars) so the editor doesn't open pre-locked.
-    const addable = writable.filter((c) => canAddTo(c));
-    const pool = addable.length ? addable : writable;
-    const calId = pool.find((c) => c.id === currentCalId)?.id || pool[0].id;
+    const calId = pickCals.find((c) => c.id === currentCalId)?.id || pickCals[0].id;
     setModal({
       open: true, calId,
       draft: { title: "", startTime: atHour(selected, 9).getTime(), endTime: atHour(selected, 10).getTime() },
@@ -770,7 +772,7 @@ export default function App() {
         <EventModal
           visible={modal.open}
           initial={modal.draft}
-          calendars={writable.map((c) => ({ id: c.id, name: c.name, color: colorForId(c.id) }))}
+          calendars={pickCals.map((c) => ({ id: c.id, name: c.name, color: colorForId(c.id) }))}
           calendarId={modal.calId}
           onPickCalendar={(id) => setModal((m) => ({ ...m, calId: id }))}
           canPickCalendar={!modal.editing}
