@@ -322,7 +322,7 @@ void ScalaImpl::setIdentity(const std::string& pubkeyHex) {
 void ScalaImpl::setNamespace(const std::string&) { /* isolation is via SCALA_CORE_DATA now */ }
 
 // ── calendars ────────────────────────────────────────────────────────────────
-std::string ScalaImpl::createCalendar(const std::string& name, const std::string& color) {
+std::string ScalaImpl::createCalendar(const std::string& name, const std::string& color, const std::string& identityId) {
     // Guard against ever reusing a calendar id. With the seeded RNG a collision is
     // ~2^-122 (never), but a duplicate id would silently share a log/key with an
     // existing calendar — regenerate until unambiguously fresh.
@@ -331,6 +331,9 @@ std::string ScalaImpl::createCalendar(const std::string& name, const std::string
     std::string key = generateUuid() + generateUuid();   // 72-char dashed, same as mobile
     m_store->upsertCalendar({ id, key, name, color });
     m_sync->startSync(id, key);
+    // Bind the chosen identity in loam_core BEFORE authoring cal.meta, so the OWNER (the first
+    // cal.meta's author) IS that identity (loam ADR 0004). Empty → the default identity.
+    if (!identityId.empty()) { try { modules().loam_core.bindContainer(id, identityId); } catch (...) {} }
     publishAndApply(id, mkEvent(scala::ET::CAL_META, json{{"name", name}, {"color", color}}, id));
     return id;
 }

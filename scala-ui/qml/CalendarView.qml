@@ -1099,6 +1099,7 @@ Item {
     // ── new-calendar popup ───────────────────────────────────────────────────
     property bool newCalOpen: true          // Open (anyone can add) vs Restricted at create time
     property bool newCalSigReq: false       // signatures-required (fold drops unsigned) at create time
+    property string newCalIdentity: ""      // "author as" (loam identity) — "" = default
     property string ncNewType: "text"   // staged field type in the new-calendar add-row
     // Add a custom field to the NEW-calendar schema (mirrors addSchemaField).
     function addNcField() {
@@ -1118,7 +1119,7 @@ Item {
         width: 500; modal: true; padding: Theme.spacing.large
         background: Rectangle { radius: Theme.spacing.radiusMedium; color: Theme.palette.backgroundElevated; border.width: 1; border.color: Theme.palette.borderHairline }
         onOpened: {
-            newCalName.text = ""; newCalDesc.text = ""; root.newCalOpen = true; root.newCalSigReq = false
+            newCalName.text = ""; newCalDesc.text = ""; root.newCalOpen = true; root.newCalSigReq = false; root.newCalIdentity = ""
             newCalSchemaModel.clear(); ncNewKey.text = ""; ncNewLabel.text = ""; ncNewOptions.text = ""; root.ncNewType = "text"
         }
         function createNow() {
@@ -1126,7 +1127,7 @@ Item {
             // listCalendars) or the id comes back quoted and updateCalendarMeta targets the
             // WRONG calendar, so description/custom-fields silently never save on create.
             // Color is DERIVED from the calendar id (calColor), never chosen — pass "".
-            var id = String(root.j(root.core("createCalendar", [newCalName.text.trim(), ""]), ""))
+            var id = String(root.j(root.core("createCalendar", [newCalName.text.trim(), "", root.newCalIdentity]), ""))
             if (id === "") { newCalPopup.close(); root.refresh(); return }
             var sch = []
             for (var i = 0; i < newCalSchemaModel.count; i++) {
@@ -1167,6 +1168,25 @@ Item {
 
                     LogosText { text: "Description"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
                     Field { id: newCalDesc; Layout.fillWidth: true; placeholderText: "Optional description" }
+
+                    // Author as — which loam identity OWNS + signs this calendar (loam ADR 0004).
+                    LogosText { text: "Author as"; color: Theme.palette.textTertiary; font.pixelSize: 11 }
+                    Flow {
+                        Layout.fillWidth: true; spacing: Theme.spacing.small
+                        Repeater {
+                            model: root.identities
+                            Rectangle {
+                                property bool sel: (root.newCalIdentity === "" ? (modelData.id === root.defaultIdentityId) : (root.newCalIdentity === modelData.id))
+                                radius: Theme.spacing.radiusSmall
+                                color: sel ? Theme.palette.accentOrange : Theme.palette.backgroundSecondary
+                                border.width: 1; border.color: sel ? Theme.palette.accentOrange : Theme.palette.borderHairline
+                                implicitHeight: chipT.implicitHeight + 10; implicitWidth: chipT.implicitWidth + 22
+                                LogosText { id: chipT; anchors.centerIn: parent; text: modelData.label; font.pixelSize: 12; color: parent.sel ? Theme.palette.background : Theme.palette.text }
+                                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.newCalIdentity = modelData.id }
+                            }
+                        }
+                    }
+                    LogosText { text: "This identity owns the calendar and signs its events."; color: Theme.palette.textTertiary; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
 
                     Rectangle { Layout.fillWidth: true; height: 1; color: Theme.palette.borderHairline; Layout.topMargin: 4 }
 

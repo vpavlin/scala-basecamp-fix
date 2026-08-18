@@ -34,7 +34,7 @@ public:
 
     // ── Calendar CRUD ────────────────────────────────────────────────────────
     /// Create a new calendar. Returns the calendar ID.
-    std::string createCalendar(const std::string& name, const std::string& color);
+    std::string createCalendar(const std::string& name, const std::string& color, const std::string& identityId = "");
 
     /// List all calendars. Returns JSON array string.
     std::string listCalendars();
