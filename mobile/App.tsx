@@ -44,6 +44,8 @@ function msg(e: unknown) { return e instanceof Error ? e.message : String(e); }
 export default function App() {
   const [cals, setCals] = useState<Calendar[]>([]);
   const [events, setEvents] = useState<CalEvent[]>([]);
+  const [viewMode, setViewMode] = useState<"month" | "agenda">("month"); // month grid vs. upcoming agenda
+  const [query, setQuery] = useState(""); // agenda search
   const [status, setStatus] = useState("starting");
   const [shared, setShared] = useState(false);
 
@@ -220,6 +222,25 @@ export default function App() {
     const we = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0, 23, 59, 59, 999).getTime() + 7 * 864e5;
     return expandEvents(events, ws, we);
   }, [events, cursor]);
+  // Agenda: occurrences grouped by day. Default = next 90 days from today; a search widens the
+  // window (−30d … +365d) and filters by title/location/description across all calendars.
+  const agenda = useMemo(() => {
+    const now = new Date(); const t0 = new Date(now); t0.setHours(0, 0, 0, 0);
+    const q = query.trim().toLowerCase();
+    const start = q ? now.getTime() - 30 * 864e5 : t0.getTime();
+    const end = q ? now.getTime() + 365 * 864e5 : t0.getTime() + 90 * 864e5;
+    let occ = expandEvents(events, start, end);
+    if (q) occ = occ.filter((o) => `${o.title || ""} ${o.location || ""} ${o.description || ""}`.toLowerCase().includes(q));
+    occ.sort((a, b) => a.startTime - b.startTime);
+    const groups: { key: string; date: Date; items: CalEvent[] }[] = [];
+    for (const o of occ) {
+      const d = new Date(o.startTime); const key = d.toDateString();
+      let g = groups.find((x) => x.key === key);
+      if (!g) { g = { key, date: d, items: [] }; groups.push(g); }
+      g.items.push(o);
+    }
+    return groups;
+  }, [events, query]);
 
   const openNew = () => {
     if (writable.length === 0) { Alert.alert("No calendar", "Create or join a calendar first."); setDrawer(true); return; }
@@ -335,6 +356,21 @@ export default function App() {
 
         <SharedNodeStatus appName="Scala" style={{ marginHorizontal: 14 }} />
 
+        {/* view toggle + search */}
+        <View style={s.viewBar}>
+          <View style={s.segment}>
+            {(["month", "agenda"] as const).map((m) => (
+              <Pressable key={m} onPress={() => setViewMode(m)} style={[s.segBtn, viewMode === m && s.segBtnOn]}>
+                <Text style={[s.segT, viewMode === m && s.segTOn]}>{m === "month" ? "Month" : "Agenda"}</Text>
+              </Pressable>
+            ))}
+          </View>
+          {viewMode === "agenda" && (
+            <TextInput style={s.searchIn} value={query} onChangeText={setQuery} placeholder="Search events…" placeholderTextColor={C.sub} autoCapitalize="none" returnKeyType="search" />
+          )}
+        </View>
+
+        {viewMode === "month" ? (<>
         <View style={s.grid}>
           <MonthGrid
             month={cursor.getMonth()} year={cursor.getFullYear()}
@@ -364,6 +400,31 @@ export default function App() {
           ))}
           <View style={{ height: 90 }} />
         </ScrollView>
+        </>) : (
+        <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled">
+          {agenda.length === 0 && <Text style={[s.sub, { padding: 16 }]}>{query.trim() ? "No matching events." : "No upcoming events in the next 90 days."}</Text>}
+          {agenda.map((g) => (
+            <View key={g.key}>
+              <View style={s.dayHead}><Text style={s.dayTitle}>{g.date.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</Text></View>
+              {g.items.map((ev) => (
+                <Pressable key={`${ev.id}-${ev.startTime}`} style={s.event} onPress={() => openEdit(ev)}>
+                  <View style={[s.dot, { backgroundColor: colorFor(ev.calendarId) }]} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.evTitle}>{ev.title}{ev.recur ? "  ↻" : ""}</Text>
+                    <Text style={s.sub}>
+                      {ev.allDay
+                        ? "All day"
+                        : `${new Date(ev.startTime).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })} – ${new Date(ev.endTime).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`}
+                      {ev.location ? ` · ${ev.location}` : ""}
+                    </Text>
+                  </View>
+                </Pressable>
+              ))}
+            </View>
+          ))}
+          <View style={{ height: 90 }} />
+        </ScrollView>
+        )}
 
         <Pressable style={s.fab} onPress={openNew}><Text style={s.fabT}>+</Text></Pressable>
 
@@ -715,6 +776,13 @@ const s = StyleSheet.create({
   month: { color: C.text, fontSize: 20, fontWeight: "700" },
   status: { color: C.sub, fontSize: 11, paddingHorizontal: 16, paddingTop: 2, paddingBottom: 6 },
   grid: { paddingHorizontal: 12, paddingTop: 4 },
+  viewBar: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, paddingBottom: 6 },
+  segment: { flexDirection: "row", backgroundColor: C.surface, borderRadius: 9, borderWidth: 1, borderColor: C.border, overflow: "hidden" },
+  segBtn: { paddingVertical: 6, paddingHorizontal: 16 },
+  segBtnOn: { backgroundColor: C.primary },
+  segT: { color: C.sub, fontSize: 13, fontWeight: "600" },
+  segTOn: { color: C.bg },
+  searchIn: { flex: 1, backgroundColor: C.surface, borderRadius: 9, borderWidth: 1, borderColor: C.border, color: C.text, paddingHorizontal: 12, paddingVertical: 6, fontSize: 13 },
   dayHead: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 4, borderTopWidth: 1, borderTopColor: C.border, marginTop: 6 },
   dayTitle: { color: C.text, fontSize: 15, fontWeight: "700" },
   event: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: C.surface, borderRadius: 10, padding: 12, marginHorizontal: 12, marginTop: 8, borderWidth: 1, borderColor: C.border },

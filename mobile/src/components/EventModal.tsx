@@ -64,6 +64,7 @@ export function EventModal({
   const [location, setLocation] = useState(initial.location || "");
   const [url, setUrl] = useState(initial.url || "");
   const [allDay, setAllDay] = useState(!!initial.allDay);
+  const [tz, setTz] = useState<"local" | "utc">("local"); // enter start/end times in local or UTC
   const [reminderMin, setReminderMin] = useState(initial.reminderMin ?? 10);
   const [recur, setRecur] = useState<Recur | undefined>(initial.recur);
   const [fields, setFields] = useState<Record<string, any>>(initial.fields || {});
@@ -97,8 +98,23 @@ export function EventModal({
   const fmtWhen = (ms: number) => new Date(ms).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   const shortDev = (d: string) => (d ? d.replace(/^scala-/, "").slice(0, 6) : "?");
 
-  const fmtDate = (d: Date) => d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
-  const fmtTime = (d: Date) => d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  // Enter start/end wall-clock in Local or UTC. An event is still an absolute instant; the toggle
+  // only changes which wall-clock the pickers show/parse. Manual UTC formatting is Hermes-safe.
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const MO = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const fmtDate = (d: Date) => tz === "utc"
+    ? `${WD[d.getUTCDay()]}, ${MO[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`
+    : d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+  const fmtTime = (d: Date) => tz === "utc"
+    ? `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`
+    : d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  // Native picker renders device-local; in UTC mode seed it shifted so its local face shows the
+  // instant's UTC wall-clock (and onPicked reads it back via setUTC*).
+  const pickerValue = (): Date => {
+    const t = pick?.which === "start" ? start : end;
+    return tz === "utc" && pick?.which !== "until" ? new Date(t.getTime() + t.getTimezoneOffset() * 60000) : t;
+  };
 
   const onPicked = (e: unknown, date?: Date) => {
     const cur = pick;
@@ -111,8 +127,14 @@ export function EventModal({
     }
     const target = cur.which === "start" ? start : end;
     const merged = new Date(target);
-    if (cur.mode === "date") { merged.setFullYear(date.getFullYear(), date.getMonth(), date.getDate()); }
-    else { merged.setHours(date.getHours(), date.getMinutes(), 0, 0); }
+    const utc = tz === "utc";
+    if (cur.mode === "date") {
+      if (utc) merged.setUTCFullYear(date.getFullYear(), date.getMonth(), date.getDate());
+      else merged.setFullYear(date.getFullYear(), date.getMonth(), date.getDate());
+    } else {
+      if (utc) merged.setUTCHours(date.getHours(), date.getMinutes(), 0, 0);
+      else merged.setHours(date.getHours(), date.getMinutes(), 0, 0);
+    }
     if (cur.which === "start") {
       setStart(merged);
       if (merged.getTime() > end.getTime()) setEnd(new Date(merged.getTime() + 3600_000));
@@ -183,6 +205,17 @@ export function EventModal({
               <Text style={s.label}>All-day</Text>
               <View style={[s.check, allDay && s.checkOn]}>{allDay && <Text style={{ color: C.bg, fontWeight: "800" }}>✓</Text>}</View>
             </Pressable>
+
+            {!allDay && (
+              <View style={s.tzRow}>
+                <Text style={[s.label, { marginBottom: 0 }]}>Enter times in</Text>
+                {(["local", "utc"] as const).map((z) => (
+                  <Pressable key={z} onPress={() => setTz(z)} style={[s.tzChip, tz === z && s.tzChipOn]} disabled={!canEdit}>
+                    <Text style={[s.tzChipT, tz === z && { color: C.bg }]}>{z === "local" ? "Local" : "UTC"}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
 
             <Text style={s.label}>Starts</Text>
             <View style={s.row}>
@@ -279,7 +312,7 @@ export function EventModal({
 
             {pick && (
               <DateTimePicker
-                value={pick.which === "start" ? start : end}
+                value={pickerValue()}
                 mode={pick.mode}
                 is24Hour
                 onChange={onPicked}
@@ -329,6 +362,10 @@ const s = StyleSheet.create({
   label: { color: C.sub, fontSize: 12, fontWeight: "600", marginTop: 12, marginBottom: 6, textTransform: "uppercase" },
   input: { backgroundColor: C.bg, borderRadius: 8, borderWidth: 1, borderColor: C.border, color: C.text, paddingHorizontal: 12, paddingVertical: 10 },
   row: { flexDirection: "row", gap: 8 },
+  tzRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 12 },
+  tzChip: { paddingVertical: 5, paddingHorizontal: 14, borderRadius: 14, borderWidth: 1, borderColor: C.border, backgroundColor: C.bg },
+  tzChipOn: { backgroundColor: C.primary, borderColor: C.primary },
+  tzChipT: { color: C.sub, fontSize: 12.5, fontWeight: "700" },
   pill: { flex: 1, backgroundColor: C.bg, borderRadius: 8, borderWidth: 1, borderColor: C.border, paddingVertical: 11, alignItems: "center" },
   pillT: { color: C.text, fontSize: 14, fontWeight: "600" },
   btn: { borderRadius: 10, paddingVertical: 13, alignItems: "center", marginTop: 12 },
