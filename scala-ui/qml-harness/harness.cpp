@@ -42,6 +42,10 @@ QString MockLogos::callModule(const QString &mod, const QString &method, const Q
         return QString(R"([{"id":"e1","calendarId":"c1","title":"Their event","startTime":%1,"endTime":%2,"creatorId":"0xowner"}])")
             .arg(EV_START).arg(EV_END);
     if (method == "createCalendar") return "\"cNEW\""; // JSON-encoded id (like the real core) — must be j()-unwrapped
+    // Mock Alisher's keycard module (ADR 0016): requestSign → pending signId; checkSignStatus stays
+    // pending (so the "hold your Keycard" overlay renders for the screenshot).
+    if (method == "requestSign") return QString(R"({"signId":"sig-1","status":"pending"})");
+    if (method == "checkSignStatus") return QString(R"({"signId":"sig-1","status":"pending"})");
     if (method == "getIdentity") return "\"0xme00000000000000000000000000000000000000\"";
     if (method == "diagnostics")
         return QString(R"({"deliveryStatus":"Connected","ctxReady":true,"calendarCount":1,"eventCount":1,"identity":"0xme00000000000000000000000000000000000000","dataDir":"/tmp/scala","calendars":[]})");
