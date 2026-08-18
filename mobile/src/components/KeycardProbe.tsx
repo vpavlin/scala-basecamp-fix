@@ -2,15 +2,24 @@
 // new calendars, plus the on-demand PIN modal and the "hold your card" tap overlay. All loam-keycard
 // / identities imports are dynamic so a build without the native module can't crash startup.
 import React, { useState, useEffect, useCallback } from "react";
-import { View, Text, TextInput, Pressable, StyleSheet, Platform, Modal } from "react-native";
+import { View, Text, TextInput, Pressable, StyleSheet, Platform } from "react-native";
+import { KeycardPinGate as UIPinGate, KeycardTapOverlay as UITapOverlay, KeycardEnrollModal, KeycardUIController, KeycardTheme } from "../lib/loam-keycard/ui";
+
+// Bridge the reusable loam-keycard UI kit to scala's signer. Dynamic imports keep a build without
+// the native module from crashing at startup. kcCtrl is module-stable so the kit's effects don't churn.
+const kcCtrl: KeycardUIController = {
+  setPinProvider: (fn) => { import("../lib/loam-keycard/scala-signer").then((s) => s.setPinProvider(fn)).catch(() => {}); },
+  onState: (cb) => { let unsub = () => {}; import("../lib/loam-keycard/scala-signer").then((s) => { unsub = s.onKeycardState(cb); }).catch(() => {}); return () => unsub(); },
+  abort: () => { import("../lib/loam-keycard/keycard").then((k) => k.abortKeycardSign()).catch(() => {}); },
+  enroll: async (pin, pairing) => { const s = await import("../lib/loam-keycard/scala-signer"); return s.enrollKeycard(pin, pairing); },
+};
+const kcTheme: KeycardTheme = { overlay: "rgba(0,0,0,0.7)", card: "#1e1e2e", border: "#89b4fa", text: "#cdd6f4", sub: "#9399b2", accent: "#89b4fa", field: "#2a2a3c", cancelBg: "#45475a", onAccent: "#1e1e2e" };
 
 export function IdentitiesPanel() {
   const [open, setOpen] = useState(false);
   const [ids, setIds] = useState<{ id: string; kind: string; label: string; address: string }[]>([]);
   const [def, setDef] = useState("");
   const [kc, setKc] = useState({ enrolled: false, session: false, status: "" });
-  const [pin, setPin] = useState(""); const [pairing, setPairing] = useState("KeycardDefaultPairing");
-  const [adv, setAdv] = useState(false); // enroll modal: show the pairing-password field
   const [setupKc, setSetupKc] = useState(false);
   const [newLabel, setNewLabel] = useState(""); const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false); const [msg, setMsg] = useState("");
@@ -34,7 +43,6 @@ export function IdentitiesPanel() {
   const setDefault = (id: string) => wrap(async () => { const I = await import("../lib/identities"); await I.setDefaultIdentityId(id); return "default identity updated"; })();
   const addSoft = wrap(async () => { const I = await import("../lib/identities"); const m = await I.addSoftIdentity(newLabel.trim() || "Identity"); setNewLabel(""); setAdding(false); return "added " + m.label; });
   const removeSoft = (id: string) => wrap(async () => { const I = await import("../lib/identities"); await I.removeSoftIdentity(id); return "removed"; })();
-  const enroll = wrap(async () => { const s = await import("../lib/loam-keycard/scala-signer"); const e = await s.enrollKeycard(pin.trim(), pairing.trim()); setSetupKc(false); setPin(""); return "✅ Keycard set up (" + e.address.slice(0, 10) + "…)"; });
   const lock = wrap(async () => { const s = await import("../lib/loam-keycard/scala-signer"); s.lockKeycard(); return "locked"; });
   const forgetKc = wrap(async () => { const s = await import("../lib/loam-keycard/scala-signer"); await s.unenroll(); return "Keycard removed"; });
 
@@ -66,7 +74,7 @@ export function IdentitiesPanel() {
 
       <View style={st.kcBox}>
         <Text style={st.kcH}>🔑 Keycard — {kc.status}</Text>
-        {!kc.enrolled ? <Pressable style={st.btn} onPress={() => { setPin(""); setAdv(false); setSetupKc(true); }}><Text style={st.btnT}>Set up Keycard</Text></Pressable> : null}
+        {!kc.enrolled ? <Pressable style={st.btn} onPress={() => setSetupKc(true)}><Text style={st.btnT}>Set up Keycard</Text></Pressable> : null}
         {kc.enrolled ? (
           <View style={st.row}>
             {kc.session ? <Pressable style={[st.btn, st.ghost]} onPress={lock}><Text style={st.btnT}>Lock</Text></Pressable> : <Text style={st.hint}>edit a card-bound calendar → asks for your PIN</Text>}
@@ -76,67 +84,23 @@ export function IdentitiesPanel() {
       </View>
       {msg ? <Text style={st.r} selectable>{msg}</Text> : null}
 
-      {/* Enroll modal — same polished sheet as the PIN gate: PIN prominent, pairing under Advanced. */}
-      <Modal visible={!kc.enrolled && setupKc} transparent animationType="fade" onRequestClose={() => setSetupKc(false)}>
-        <View style={st.overlay}><View style={st.card}>
-          <Text style={st.big}>🔑</Text>
-          <Text style={st.tapT}>Set up your Keycard</Text>
-          <Text style={st.cardSub}>Enter your PIN, then hold the card to the phone. This reads its key and makes it your identity.</Text>
-          <TextInput style={st.pinIn} value={pin} onChangeText={setPin} keyboardType="number-pad" secureTextEntry autoFocus placeholder="••••••" placeholderTextColor="#6c7086" onSubmitEditing={() => !busy && enroll()} />
-          {adv ? (
-            <TextInput style={[st.in, { width: 220, marginTop: 10 }]} placeholder="pairing password" placeholderTextColor="#6c7086" value={pairing} onChangeText={setPairing} autoCapitalize="none" autoCorrect={false} />
-          ) : <Pressable onPress={() => setAdv(true)} hitSlop={8}><Text style={st.advT}>Advanced · pairing password</Text></Pressable>}
-          <View style={st.row2}>
-            <Pressable style={st.cancel} onPress={() => setSetupKc(false)}><Text style={st.cancelT}>Cancel</Text></Pressable>
-            <Pressable style={[st.unlock, busy && st.dim]} disabled={busy} onPress={enroll}><Text style={st.btnT}>Enroll (tap)</Text></Pressable>
-          </View>
-        </View></View>
-      </Modal>
+      {/* Enroll — the reusable loam-keycard UI kit modal (PIN prominent, pairing under Advanced). */}
+      <KeycardEnrollModal
+        ctrl={kcCtrl} theme={kcTheme}
+        visible={!kc.enrolled && setupKc}
+        onClose={() => setSetupKc(false)}
+        onResult={(addr) => { setMsg("✅ Keycard set up (" + addr.slice(0, 10) + "…)"); refresh(); }}
+        onError={(e: any) => setMsg("error: " + String(e?.message || e))}
+      />
       </>)}
     </View>
   );
 }
 
-// on-demand PIN prompt (implicit unlock)
-export function KeycardPinGate() {
-  const [req, setReq] = useState<{ resolve: (p: string | null) => void } | null>(null);
-  const [pin, setPin] = useState("");
-  useEffect(() => {
-    let active = true;
-    (async () => { try { const s = await import("../lib/loam-keycard/scala-signer"); if (!active) return; s.setPinProvider(() => new Promise<string | null>((resolve) => { setPin(""); setReq({ resolve }); })); } catch { /* */ } })();
-    return () => { active = false; (async () => { try { const s = await import("../lib/loam-keycard/scala-signer"); s.setPinProvider(null); } catch { /* */ } })(); };
-  }, []);
-  const submit = () => { const r = req; setReq(null); r?.resolve(pin.trim() || null); };
-  const cancel = () => { const r = req; setReq(null); r?.resolve(null); };
-  return (
-    <Modal visible={!!req} transparent animationType="fade" onRequestClose={cancel}>
-      <View style={st.overlay}><View style={st.card}>
-        <Text style={st.big}>🔑</Text><Text style={st.tapT}>Enter your Keycard PIN</Text>
-        <TextInput style={st.pinIn} value={pin} onChangeText={setPin} keyboardType="number-pad" secureTextEntry autoFocus placeholder="••••••" placeholderTextColor="#6c7086" onSubmitEditing={submit} />
-        <View style={st.row2}><Pressable style={st.cancel} onPress={cancel}><Text style={st.cancelT}>Cancel</Text></Pressable><Pressable style={st.unlock} onPress={submit}><Text style={st.btnT}>Unlock</Text></Pressable></View>
-      </View></View>
-    </Modal>
-  );
-}
-
-// "hold your card" tap overlay
-export function KeycardTapOverlay() {
-  const [tap, setTap] = useState(false);
-  useEffect(() => {
-    let unsub = () => {};
-    (async () => { try { const s = await import("../lib/loam-keycard/scala-signer"); unsub = s.onKeycardState((x) => setTap(x === "tap")); } catch { /* */ } })();
-    return () => { try { unsub(); } catch { /* */ } };
-  }, []);
-  const cancel = async () => { try { const { abortKeycardSign } = await import("../lib/loam-keycard/keycard"); abortKeycardSign(); } catch { /* */ } setTap(false); };
-  return (
-    <Modal visible={tap} transparent animationType="fade" onRequestClose={cancel}>
-      <View style={st.overlay}><View style={st.card}>
-        <Text style={st.big}>🔑</Text><Text style={st.tapT}>Hold your Keycard to the phone…</Text>
-        <Pressable style={st.cancel} onPress={cancel}><Text style={st.cancelT}>Cancel</Text></Pressable>
-      </View></View>
-    </Modal>
-  );
-}
+// The implicit-unlock PIN gate + "hold your card" overlay are now the reusable loam-keycard UI kit,
+// wired to scala's signer via kcCtrl (mounted at App root).
+export function KeycardPinGate() { return <UIPinGate ctrl={kcCtrl} theme={kcTheme} />; }
+export function KeycardTapOverlay() { return <UITapOverlay ctrl={kcCtrl} theme={kcTheme} />; }
 
 const st = StyleSheet.create({
   box: { margin: 8, padding: 12, backgroundColor: "#2a2a3c", borderRadius: 8 },

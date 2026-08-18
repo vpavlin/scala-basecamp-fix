@@ -60,6 +60,22 @@ export interface KeycardSession {
   signDigest(digest32: Uint8Array): Promise<KeycardSignResult>;
 }
 
+/** A minimal async signer over a digest — the shape logos-sync's signEventAsync consumes. */
+export interface KeycardAsyncSigner {
+  pubHex(): string | null;
+  address(): string | null;
+  /** Sign a raw 32-byte digest on the card → 64-byte compact r‖s (low-S). */
+  signDigest(digest32: Uint8Array): Promise<Uint8Array>;
+}
+/** Wrap a session as an async signer so an app's shim is ~1 line (logos-sync AsyncSigner-friendly). */
+export function keycardAsyncSigner(sess: KeycardSession): KeycardAsyncSigner {
+  return {
+    pubHex: () => sess.pubHex(),
+    address: () => sess.address(),
+    signDigest: (d) => sess.signDigest(d).then((s) => s.compact),
+  };
+}
+
 export function createKeycardSession(opts: KeycardSessionOpts): KeycardSession {
   const ADDR_KEY = opts.storagePrefix + "-address";
   const PUB_KEY = opts.storagePrefix + "-pubhex";
