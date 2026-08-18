@@ -71,7 +71,6 @@ inline json foldCalendar(const std::string& calId, const std::vector<Event>& log
     std::map<std::string, std::string> creatorOf; // event id -> ORIGINAL author (edit-your-own)
     bool rolesConfigured = false;
     bool openCal = true;                          // cal.meta "open" (LWW): may participants add? default yes
-    bool sigRequired = false;                     // cal.meta "signaturesRequired" (LWW): drop any unsigned/unverified event
 
     auto isEditor = [&](const std::string& dev, bool verified) -> bool {
         if (rolesConfigured && !verified) return false;    // privileged claim must be authenticated
@@ -99,8 +98,7 @@ inline json foldCalendar(const std::string& calId, const std::vector<Event>& log
         // entirely. An UNSIGNED (legacy) event is admitted but never counts as authenticated.
         const bool signed_ = isSigned(e);
         const bool verified = signed_ && verifyEvent(e);
-        if (signed_ && !verified) continue;
-        if (sigRequired && !verified) continue;   // signaturesRequired: reject unsigned writes
+        if (!verified) continue;   // signatures ALWAYS required — every event is signed via the loam identity; drop unsigned/tampered
         const std::string& author = e.dev;
         if (e.type == ET::CAL_META) {
             bool creating = owner.empty();
@@ -111,7 +109,6 @@ inline json foldCalendar(const std::string& calId, const std::vector<Event>& log
             if (e.payload.contains("description")) description = e.payload.value("description", description);
             if (e.payload.contains("schema") && e.payload["schema"].is_array()) schema = e.payload["schema"];
             if (e.payload.contains("open"))               openCal     = e.payload.value("open", true);
-            if (e.payload.contains("signaturesRequired")) sigRequired = e.payload.value("signaturesRequired", false);
         } else if (e.type == ET::MEMBER_SET) {
             // A role grant is admitted only from an AUTHENTICATED owner/editor.
             bool authed = verified && (author == owner || (roleOf.count(author) && (roleOf[author] == "editor" || roleOf[author] == "admin")));
@@ -149,7 +146,7 @@ inline json foldCalendar(const std::string& calId, const std::vector<Event>& log
     return json{{"id", calId}, {"name", name}, {"color", color},
                 {"description", description}, {"schema", schema},
                 {"owner", owner}, {"roles", roles}, {"rolesConfigured", rolesConfigured},
-                {"open", openCal}, {"signaturesRequired", sigRequired}, {"events", evArr}};
+                {"open", openCal}, {"events", evArr}};
 }
 
 } // namespace scala

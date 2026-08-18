@@ -1,0 +1,20 @@
+[qml:1] file:///nix/store/n5sy51r79209918mn1svyaliqbdxkm76-logos-design-system-1.0.0/lib/Logos/Theme/Theme.qml:9:33: QML Settings: Failed to initialize QSettings instance. Status code is: 1
+[qml:1] file:///nix/store/n5sy51r79209918mn1svyaliqbdxkm76-logos-design-system-1.0.0/lib/Logos/Theme/Theme.qml:9:33: QML Settings: The following application identifiers have not been set: QList("organizationName", "organizationDomain")
+[CALL] requestSign({"domain":"scala","payloadHash":"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff","caller":"scala","scheme":"ecdsa"})
+[CALL] checkSignStatus(sig-1)
+[shot] /home/vpavlin/scala/scala-ui/qml-harness/shots-kc/01-main.png (1100x760)
+[js-err] openEditEvent(events[0]) :: <Unknown File>:0: ReferenceError: events is not defined
+[CALL] checkSignStatus(sig-1)
+[shot] /home/vpavlin/scala/scala-ui/qml-harness/shots-kc/01-edit-others.png (1100x760)
+[js-err] eventPopup.close() :: <Unknown File>:0: ReferenceError: eventPopup is not defined
+[js-err] openNewEvent() :: <Unknown File>:0: ReferenceError: openNewEvent is not defined
+[CALL] checkSignStatus(sig-1)
+[shot] /home/vpavlin/scala/scala-ui/qml-harness/shots-kc/02-new-own.png (1100x760)
+[js-err] eventPopup.close() :: <Unknown File>:0: ReferenceError: eventPopup is not defined
+[js-err] newCalPopup.open() :: <Unknown File>:0: ReferenceError: newCalPopup is not defined
+[CALL] checkSignStatus(sig-1)
+[shot] /home/vpavlin/scala/scala-ui/qml-harness/shots-kc/03-newcal.png (1100x760)
+[js-err] newCalPopup.close() :: <Unknown File>:0: ReferenceError: newCalPopup is not defined
+[js-err] openCalSettings(calById("c1")) :: <Unknown File>:0: ReferenceError: calById is not defined
+[CALL] checkSignStatus(sig-1)
+[shot] /home/vpavlin/scala/scala-ui/qml-harness/shots-kc/04-settings.png (1100x760)

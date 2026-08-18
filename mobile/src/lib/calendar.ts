@@ -223,9 +223,9 @@ export async function createCalendar(
   description = "",
   identityId?: string,
   // Extra meta set AT CREATE so the full form is one signed cal.meta (one Keycard tap), not
-  // create-then-edit. schema = custom fields; open = anyone-with-invite-can-add; signaturesRequired
+  // create-then-edit. schema = custom fields; open = anyone-with-invite-can-add.
   // = fold drops unsigned writes.
-  opts?: { schema?: any[]; open?: boolean; signaturesRequired?: boolean },
+  opts?: { schema?: any[]; open?: boolean },
 ): Promise<Calendar> {
   const id = Crypto.randomUUID();
   const encryptionKey = Crypto.randomUUID() + Crypto.randomUUID();
@@ -240,7 +240,6 @@ export async function createCalendar(
   if (description.trim()) meta.description = description.trim();
   if (opts?.schema && opts.schema.length) meta.schema = opts.schema;
   if (opts?.open !== undefined) meta.open = opts.open;
-  if (opts?.signaturesRequired) meta.signaturesRequired = true;
   await publishAndApply(id, await mkEvent(ET.CAL_META, meta, id));
   notifyChange();
   return { id, name: nm, color, isShared: true, encryptionKey, creatorId: author };
@@ -257,7 +256,7 @@ export async function deleteCalendar(calId: string): Promise<void> {
 // travel in the event log to every device. Only the changed fields are written.
 export async function updateCalendarMeta(
   calId: string,
-  fields: { name?: string; color?: string; description?: string; schema?: any[]; open?: boolean; signaturesRequired?: boolean },
+  fields: { name?: string; color?: string; description?: string; schema?: any[]; open?: boolean },
 ): Promise<void> {
   const p: any = {};
   if (fields.name !== undefined) p.name = fields.name.trim();
@@ -265,7 +264,6 @@ export async function updateCalendarMeta(
   if (fields.description !== undefined) p.description = fields.description.trim();
   if (fields.schema !== undefined) p.schema = fields.schema;
   if (fields.open !== undefined) p.open = fields.open;
-  if (fields.signaturesRequired !== undefined) p.signaturesRequired = fields.signaturesRequired;
   if (Object.keys(p).length === 0) return;
   if (p.name !== undefined || p.color !== undefined) {
     const reg = (await store.getRegistry()).find((r) => r.id === calId);

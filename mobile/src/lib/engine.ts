@@ -94,7 +94,6 @@ export interface FoldedCalendar {
   roles: Record<string, string>;
   rolesConfigured: boolean;
   open: boolean;
-  signaturesRequired: boolean;
   events: any[];
 }
 
@@ -119,7 +118,6 @@ export function foldCalendar(calId: string, log: Event[]): FoldedCalendar {
   const creatorOf = new Map<string, string>(); // event id -> ORIGINAL author (edit-your-own)
   let rolesConfigured = false;
   let openCal = true; // cal.meta "open" (LWW): may participants add? default yes
-  let sigRequired = false; // cal.meta "signaturesRequired" (LWW): when on, the fold DROPS any unsigned/unverified event — only signed writes count (a "card-secured" calendar).
   const isEditor = (dev: string, verified: boolean): boolean => {
     if (rolesConfigured && !verified) return false; // privileged claim must be authenticated
     if (dev === owner) return true;
@@ -143,8 +141,7 @@ export function foldCalendar(calId: string, log: Event[]): FoldedCalendar {
     // are admitted but never count as authenticated.
     const signed = isSigned(e);
     const verified = signed && verifyEvent(e);
-    if (signed && !verified) continue;
-    if (sigRequired && !verified) continue; // signaturesRequired: unsigned writes are rejected
+    if (!verified) continue; // signatures ALWAYS required — every event is signed via the loam identity; drop anything unsigned/tampered
     const author = e.dev;
     if (e.type === ET.CAL_META) {
       const creating = !owner;
@@ -156,7 +153,6 @@ export function foldCalendar(calId: string, log: Event[]): FoldedCalendar {
       if (Object.prototype.hasOwnProperty.call(p, "description")) description = p.description ?? description;
       if (Array.isArray(p.schema)) schema = p.schema;
       if (Object.prototype.hasOwnProperty.call(p, "open")) openCal = p.open !== false;
-      if (Object.prototype.hasOwnProperty.call(p, "signaturesRequired")) sigRequired = p.signaturesRequired === true;
     } else if (e.type === ET.MEMBER_SET) {
       // A role grant is admitted only from an AUTHENTICATED owner/editor.
       const authed = verified && (author === owner || roleOf.get(author) === "editor" || roleOf.get(author) === "admin");
@@ -189,7 +185,7 @@ export function foldCalendar(calId: string, log: Event[]): FoldedCalendar {
   const ids = [...events.keys()].sort();
   const roles: Record<string, string> = {};
   [...roleOf.keys()].sort().forEach((k) => (roles[k] = roleOf.get(k)!));
-  return { id: calId, name, color, description, schema, owner, roles, rolesConfigured, open: openCal, signaturesRequired: sigRequired, events: ids.map((id) => events.get(id)) };
+  return { id: calId, name, color, description, schema, owner, roles, rolesConfigured, open: openCal, events: ids.map((id) => events.get(id)) };
 }
 
 // ── Clock: stamps local events, advances past ingested causes ────────────────

@@ -23,7 +23,6 @@ export interface Calendar {
   roles?: Record<string, string>; // address -> "editor"|"viewer"
   rolesConfigured?: boolean;
   open?: boolean; // may participants add events? (default true)
-  signaturesRequired?: boolean; // only signed writes accepted (card-secured); LWW via cal.meta
 }
 
 export interface CalEvent {
@@ -145,7 +144,6 @@ export const store = {
         roles: f.roles,
         rolesConfigured: f.rolesConfigured,
         open: f.open,
-        signaturesRequired: (f as any).signaturesRequired,
       });
     }
     return out;

@@ -1097,8 +1097,7 @@ Item {
     }
 
     // ── new-calendar popup ───────────────────────────────────────────────────
-    property bool newCalOpen: true          // Open (anyone can add) vs Restricted at create time
-    property bool newCalSigReq: false       // signatures-required (fold drops unsigned) at create time
+    property bool newCalOpen: false         // default CLOSED — opening a calendar up is a deliberate choice
     property string newCalIdentity: ""      // "author as" (loam identity) — "" = default
     property string joinIdentity: ""         // "author as" for a joined calendar
     property string ncNewType: "text"   // staged field type in the new-calendar add-row
@@ -1120,7 +1119,7 @@ Item {
         width: 500; modal: true; padding: Theme.spacing.large
         background: Rectangle { radius: Theme.spacing.radiusMedium; color: Theme.palette.backgroundElevated; border.width: 1; border.color: Theme.palette.borderHairline }
         onOpened: {
-            newCalName.text = ""; newCalDesc.text = ""; root.newCalOpen = true; root.newCalSigReq = false; root.newCalIdentity = ""
+            newCalName.text = ""; newCalDesc.text = ""; root.newCalOpen = false; root.newCalIdentity = ""
             newCalSchemaModel.clear(); ncNewKey.text = ""; ncNewLabel.text = ""; ncNewOptions.text = ""; root.ncNewType = "text"
         }
         function createNow() {
@@ -1145,7 +1144,6 @@ Item {
             if (d !== "") meta.description = d
             if (sch.length > 0) meta.schema = sch
             if (!root.newCalOpen) meta.open = false
-            if (root.newCalSigReq) meta.signaturesRequired = true
             if (Object.keys(meta).length > 0) root.core("updateCalendarMeta", [id, JSON.stringify(meta)])
             newCalPopup.close(); root.refresh()
         }
@@ -1260,19 +1258,6 @@ Item {
             }
 
             // Signatures-required — the fold DROPS any unsigned event (ADR 0015). The core enforces
-            // this on both clients (scala_engine.hpp / engine.ts parity, core >= 0.8.5).
-            RowLayout {
-                Layout.fillWidth: true; Layout.topMargin: Theme.spacing.small
-                ColumnLayout {
-                    Layout.fillWidth: true; spacing: 0
-                    LogosText { text: "🔒 Signatures required"; color: Theme.palette.text; font.pixelSize: 13 }
-                    LogosText {
-                        text: "On = only signed writes count; unsigned events are dropped. Enforced on mobile + desktop."
-                        color: Theme.palette.textSecondary; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap
-                    }
-                }
-                Switch { checked: root.newCalSigReq; onToggled: root.newCalSigReq = checked }
-            }
 
             RowLayout {
                 Layout.fillWidth: true; Layout.topMargin: Theme.spacing.small
@@ -1468,20 +1453,6 @@ Item {
                         Switch {
                             checked: { var c = root.calById(root.setCalId); return !c || c.open !== false }
                             onToggled: { root.core("updateCalendarMeta", [root.setCalId, JSON.stringify({ open: checked })]); root.refresh() }
-                        }
-                    }
-                    // Signatures-required (ADR 0015): the fold drops any unsigned event. Owner/editor only.
-                    RowLayout {
-                        visible: root.canManage(root.setCalId)
-                        Layout.fillWidth: true; spacing: Theme.spacing.small
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            LogosText { text: "🔒 Signatures required"; color: Theme.palette.text; font.pixelSize: 13 }
-                            LogosText { text: "On = the fold DROPS any unsigned event — only signed writes count. Enforced on mobile + desktop."; color: Theme.palette.textTertiary; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                        }
-                        Switch {
-                            checked: { var c = root.calById(root.setCalId); return !!c && c.signaturesRequired === true }
-                            onToggled: { root.core("updateCalendarMeta", [root.setCalId, JSON.stringify({ signaturesRequired: checked })]); root.refresh() }
                         }
                     }
                     LogosText {

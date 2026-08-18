@@ -77,8 +77,7 @@ export default function App() {
   const [identities, setIdentities] = useState<{ id: string; kind: string; label: string; address: string }[]>([]);
   const [newCalOpen, setNewCalOpen] = useState(false);        // full "new calendar" form modal
   const [newCalSchema, setNewCalSchema] = useState<FieldDef[]>([]); // custom fields, set at create
-  const [newCalCanAdd, setNewCalCanAdd] = useState(true);     // "Open — anyone can add" (default on)
-  const [newCalSigReq, setNewCalSigReq] = useState(false);    // signatures-required, set at create
+  const [newCalCanAdd, setNewCalCanAdd] = useState(false);    // "Open — anyone can add" (default CLOSED — opening is deliberate)
   const [joinIdentity, setJoinIdentity] = useState("");       // identity to author my events on a joined calendar
   const [calSetIdentity, setCalSetIdentity] = useState("");   // the open calendar-settings sheet's bound identity
   const [currentCalId, setCurrentCalId] = useState<string>("");     // #5: last-tapped calendar (preselected for new events)
@@ -340,9 +339,9 @@ export default function App() {
   const doCreateCal = async () => {
     try {
       const cal = await createCalendar(newCalName || "My calendar", "#89b4fa", newCalDesc, newCalIdentity || undefined,
-        { schema: newCalSchema, open: newCalCanAdd, signaturesRequired: newCalSigReq });
+        { schema: newCalSchema, open: newCalCanAdd });
       setNewCalOpen(false);
-      setNewCalName(""); setNewCalDesc(""); setNewCalSchema([]); setNewCalCanAdd(true); setNewCalSigReq(false);
+      setNewCalName(""); setNewCalDesc(""); setNewCalSchema([]); setNewCalCanAdd(false);
       setNf({ key: "", label: "", type: "text" });
       setCurrentCalId(cal.id); setLastInvite(buildInvite(cal));
       await startSyncing(undefined, setStatus);
@@ -505,7 +504,7 @@ export default function App() {
                 </Pressable>
               ))}
 
-              <Pressable style={[s.smBtn, { marginTop: 4, alignItems: "center" }]} onPress={() => { setNewCalName(""); setNewCalDesc(""); setNewCalSchema([]); setNewCalCanAdd(true); setNewCalSigReq(false); setNf({ key: "", label: "", type: "text" }); setNewCalOpen(true); }}>
+              <Pressable style={[s.smBtn, { marginTop: 4, alignItems: "center" }]} onPress={() => { setNewCalName(""); setNewCalDesc(""); setNewCalSchema([]); setNewCalCanAdd(false); setNf({ key: "", label: "", type: "text" }); setNewCalOpen(true); }}>
                 <Text style={s.smBtnT}>+ New calendar</Text>
               </Pressable>
 
@@ -613,19 +612,6 @@ export default function App() {
                     />
                   </View>
                 )}
-                {canManage && (
-                  <View style={s.rowBetween}>
-                    <View style={{ flex: 1, paddingRight: 10 }}>
-                      <Text style={{ color: C.text }}>🔒 Signatures required</Text>
-                      <Text style={s.sub}>On = the fold DROPS any unsigned event — only signed writes count. Pair with a Keycard-owned calendar for "only my card can write here". Enforced on mobile + desktop.</Text>
-                    </View>
-                    <Switch
-                      value={!!calSet?.cal.signaturesRequired}
-                      onValueChange={async (v) => { if (calSet) { await updateCalendarMeta(calSet.cal.id, { signaturesRequired: v }); setCalSet((s2) => s2 && { ...s2, cal: { ...s2.cal, signaturesRequired: v } }); } }}
-                      trackColor={{ true: C.accent, false: C.border }} thumbColor="#fff"
-                    />
-                  </View>
-                )}
                 <Text style={[s.sub, { marginBottom: 6, marginTop: 8 }]}>
                   {calSet ? `Your role: ${roleOf(calSet.cal)}${roleOf(calSet.cal) === "viewer" ? " — read-only." : "."}` : ""}
                 </Text>
@@ -711,13 +697,6 @@ export default function App() {
                     <Text style={s.sub}>Off = only editors can add. Everyone can still edit only the events they created.</Text>
                   </View>
                   <Switch value={newCalCanAdd} onValueChange={setNewCalCanAdd} trackColor={{ true: C.primary, false: C.border }} thumbColor="#fff" />
-                </View>
-                <View style={s.rowBetween}>
-                  <View style={{ flex: 1, paddingRight: 10 }}>
-                    <Text style={{ color: C.text }}>🔒 Signatures required</Text>
-                    <Text style={s.sub}>On = the fold DROPS any unsigned event — only signed writes count. Pair with a Keycard identity for "only my card can write here". Enforced on mobile + desktop.</Text>
-                  </View>
-                  <Switch value={newCalSigReq} onValueChange={setNewCalSigReq} trackColor={{ true: C.accent, false: C.border }} thumbColor="#fff" />
                 </View>
 
                 <View style={{ flexDirection: "row", gap: 12, marginTop: 20, justifyContent: "flex-end" }}>
