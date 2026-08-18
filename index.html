@@ -1,199 +1,235 @@
 <title>Scala</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Scala — Secure CALendar. A shared calendar rebuilt on Logos: offline-first, convergent, and signed by your own key. Play with the convergence demo.">
+<meta name="description" content="Scala — Secure CALendar. A shared calendar rebuilt on Logos: offline-first, convergent, signed by your own key. Con un tocco di Nonno. Play the convergence demo.">
 <link rel="icon" href="assets/scala.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500..900;1,9..144,500..800&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  /* ---- tokens: light default = Catppuccin Latte ---- */
+  /* ===== Catppuccin tokens (light = Latte, dark = Mocha) ===== */
   :root{
     --ground:#EFF1F5; --surface:#FFFFFF; --surface-2:#E6E9EF;
     --ink:#4C4F69; --ink-soft:#6C6F85; --ink-faint:#8C8FA1;
-    --blue:#1E66F5; --lav:#7287FD; --sky:#209FB5; --green:#40A02B; --peach:#FE640B; --mauve:#8839EF;
+    --blue:#1E66F5; --lav:#7287FD; --sky:#209FB5; --green:#40A02B;
+    --peach:#FE640B; --mauve:#8839EF; --pink:#EA76CB; --yellow:#DF8E1D; --red:#D20F39;
     --accent:#1E66F5; --accent-ink:#1E66F5;
-    --line:rgba(76,79,105,.14); --line-soft:rgba(76,79,105,.08);
-    --shadow:0 1px 2px rgba(76,79,105,.06),0 10px 30px rgba(76,79,105,.09);
+    --line:rgba(76,79,105,.16); --line-soft:rgba(76,79,105,.08);
+    --shadow:0 2px 4px rgba(76,79,105,.06),0 12px 34px rgba(76,79,105,.10);
+    --hard:4px 4px 0 var(--ink);
+    --dots:rgba(76,79,105,.05);
   }
   @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
     --ground:#11111B; --surface:#1E1E2E; --surface-2:#181825;
     --ink:#CDD6F4; --ink-soft:#A6ADC8; --ink-faint:#7F849C;
-    --blue:#89B4FA; --lav:#B4BEFE; --sky:#74C7EC; --green:#A6E3A1; --peach:#FAB387; --mauve:#CBA6F7;
+    --blue:#89B4FA; --lav:#B4BEFE; --sky:#74C7EC; --green:#A6E3A1;
+    --peach:#FAB387; --mauve:#CBA6F7; --pink:#F5C2E7; --yellow:#F9E2AF; --red:#F38BA8;
     --accent:#89B4FA; --accent-ink:#89B4FA;
-    --line:rgba(205,214,244,.13); --line-soft:rgba(205,214,244,.06);
-    --shadow:0 1px 2px rgba(0,0,0,.35),0 14px 40px rgba(0,0,0,.5);
+    --line:rgba(205,214,244,.15); --line-soft:rgba(205,214,244,.06);
+    --shadow:0 2px 4px rgba(0,0,0,.35),0 16px 44px rgba(0,0,0,.5);
+    --hard:4px 4px 0 rgba(0,0,0,.55);
+    --dots:rgba(205,214,244,.05);
   }}
   :root[data-theme="dark"]{
     --ground:#11111B; --surface:#1E1E2E; --surface-2:#181825;
     --ink:#CDD6F4; --ink-soft:#A6ADC8; --ink-faint:#7F849C;
-    --blue:#89B4FA; --lav:#B4BEFE; --sky:#74C7EC; --green:#A6E3A1; --peach:#FAB387; --mauve:#CBA6F7;
+    --blue:#89B4FA; --lav:#B4BEFE; --sky:#74C7EC; --green:#A6E3A1;
+    --peach:#FAB387; --mauve:#CBA6F7; --pink:#F5C2E7; --yellow:#F9E2AF; --red:#F38BA8;
     --accent:#89B4FA; --accent-ink:#89B4FA;
-    --line:rgba(205,214,244,.13); --line-soft:rgba(205,214,244,.06);
-    --shadow:0 1px 2px rgba(0,0,0,.35),0 14px 40px rgba(0,0,0,.5);
+    --line:rgba(205,214,244,.15); --line-soft:rgba(205,214,244,.06);
+    --shadow:0 2px 4px rgba(0,0,0,.35),0 16px 44px rgba(0,0,0,.5);
+    --hard:4px 4px 0 rgba(0,0,0,.55); --dots:rgba(205,214,244,.05);
   }
 
   *{box-sizing:border-box}
   html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
-  body{margin:0;background:var(--ground);color:var(--ink);
-    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-    font-size:17px;line-height:1.6;letter-spacing:-.005em;-webkit-font-smoothing:antialiased;}
-  .wm{font-family:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif;}
-  .mono{font-family:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;}
-  .wrap{max-width:1060px;margin:0 auto;padding:0 24px}
+  body{margin:0;color:var(--ink);
+    background:
+      radial-gradient(circle at 1px 1px, var(--dots) 1px, transparent 0) 0 0/22px 22px,
+      var(--ground);
+    font-family:"Space Grotesk",ui-sans-serif,system-ui,-apple-system,Roboto,sans-serif;
+    font-size:17px;line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+  .disp{font-family:"Fraunces","Iowan Old Style",Georgia,serif;font-optical-sizing:auto}
+  .mono{font-family:ui-monospace,"JetBrains Mono","SF Mono",Menlo,Consolas,monospace}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 24px}
   a{color:inherit}
-  h1,h2,h3{text-wrap:balance;margin:0;letter-spacing:-.02em;line-height:1.08}
-  section{padding:clamp(52px,8vw,100px) 0}
-  .eyebrow{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent-ink);font-weight:600}
+  h1,h2,h3{margin:0;text-wrap:balance;line-height:1.02}
+  section{padding:clamp(48px,7vw,92px) 0;position:relative}
+  .eyebrow{font-size:12.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent-ink);font-weight:700}
+  .it{font-style:italic;color:var(--peach)}
 
-  header{position:sticky;top:0;z-index:20;background:color-mix(in oklab,var(--ground) 86%,transparent);
-    backdrop-filter:saturate(1.2) blur(10px);border-bottom:1px solid var(--line-soft)}
-  .bar{display:flex;align-items:center;justify-content:space-between;height:62px}
+  /* ===== header + marquee ===== */
+  header{position:sticky;top:0;z-index:30;background:color-mix(in oklab,var(--ground) 84%,transparent);
+    backdrop-filter:saturate(1.3) blur(10px);border-bottom:2px solid var(--ink)}
+  .bar{display:flex;align-items:center;justify-content:space-between;height:64px}
   .brand{display:flex;align-items:center;gap:11px;text-decoration:none}
-  .brand .name{font-size:22px;font-weight:600}
-  .brand svg{border-radius:8px;display:block}
-  .navlinks{display:flex;gap:24px;align-items:center}
-  .navlinks a{font-size:14.5px;color:var(--ink-soft);text-decoration:none;transition:color .15s}
+  .brand svg{border-radius:9px;display:block;box-shadow:var(--hard);border:2px solid var(--ink)}
+  .brand .name{font-size:26px;font-weight:900;letter-spacing:-.01em}
+  .navlinks{display:flex;gap:22px;align-items:center}
+  .navlinks a{font-size:14.5px;color:var(--ink-soft);text-decoration:none;font-weight:500;transition:color .15s}
   .navlinks a:hover{color:var(--ink)}
-  .navlinks .ghub{color:var(--ink);font-weight:500}
-  @media(max-width:640px){.navlinks a:not(.ghub){display:none}}
+  .navlinks .ghub{color:var(--ink);font-weight:700}
+  @media(max-width:660px){.navlinks a:not(.ghub){display:none}}
+  .marquee{background:var(--peach);color:#11111B;border-bottom:2px solid var(--ink);overflow:hidden;white-space:nowrap;font-weight:700;letter-spacing:.04em;font-size:13px}
+  .marquee .track{display:inline-block;padding:7px 0;animation:slide 24s linear infinite}
+  .marquee .track span{padding:0 14px;text-transform:uppercase}
+  .marquee .track b{color:#11111B}
+  @keyframes slide{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+  @media(prefers-reduced-motion:reduce){.marquee .track{animation:none}}
 
-  /* ---- hero ---- */
-  .hero{position:relative;overflow:hidden;padding-top:clamp(44px,7vw,80px);padding-bottom:0}
-  .hero-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:44px;align-items:center}
-  @media(max-width:820px){.hero-grid{grid-template-columns:1fr;gap:22px}}
-  .hero h1{font-size:clamp(40px,6.4vw,76px);font-weight:600;letter-spacing:-.03em}
-  .hero h1 em{font-style:normal;color:var(--accent-ink)}
-  .lede{font-size:clamp(18px,2.2vw,21px);color:var(--ink-soft);max-width:35ch;margin-top:22px}
-  .rooted{display:inline-flex;align-items:center;gap:8px;margin-top:20px;font-size:13px;color:var(--ink-faint);
-    text-decoration:none;padding:6px 12px;border:1px solid var(--line);border-radius:999px;background:var(--surface);transition:border-color .15s,color .15s}
-  .rooted:hover{color:var(--ink-soft);border-color:color-mix(in oklab,var(--green) 50%,var(--line))}
-  .rooted .dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 0 0 color-mix(in oklab,var(--green) 70%,transparent);animation:pulse 2.4s infinite}
+  /* ===== hero ===== */
+  .hero{position:relative;padding-top:clamp(40px,6vw,70px);padding-bottom:0}
+  .hero-grid{display:grid;grid-template-columns:1.12fr .88fr;gap:40px;align-items:center}
+  @media(max-width:860px){.hero-grid{grid-template-columns:1fr;gap:20px}}
+  .hero h1{font-size:clamp(46px,8vw,92px);font-weight:900;letter-spacing:-.035em}
+  .hero h1 .hl{background:linear-gradient(180deg,transparent 62%,color-mix(in oklab,var(--yellow) 70%,transparent) 62%);padding:0 .04em}
+  .hero h1 em{font-style:italic;color:var(--peach);font-weight:800}
+  .lede{font-size:clamp(18px,2.2vw,21px);color:var(--ink-soft);max-width:36ch;margin-top:22px;font-weight:400}
+  .lede b{color:var(--ink);font-weight:700}
+  .rooted{display:inline-flex;align-items:center;gap:8px;margin-top:18px;font-size:13px;color:var(--ink-faint);
+    text-decoration:none;padding:6px 13px;border:2px solid var(--line);border-radius:999px;background:var(--surface);font-weight:600;transition:.15s}
+  .rooted:hover{color:var(--ink);border-color:var(--green);transform:translateY(-1px)}
+  .rooted .dot{width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 2.2s infinite}
   @keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in oklab,var(--green) 60%,transparent)}70%{box-shadow:0 0 0 7px transparent}100%{box-shadow:0 0 0 0 transparent}}
-  .cta-row{display:flex;flex-wrap:wrap;gap:12px;margin-top:26px}
-  .btn{display:inline-flex;align-items:center;gap:8px;height:46px;padding:0 20px;border-radius:11px;
-    font-size:15px;font-weight:550;text-decoration:none;border:1px solid transparent;cursor:pointer;
-    transition:transform .12s,box-shadow .12s,background .15s}
-  .btn.primary{background:var(--accent);color:#FFF;box-shadow:var(--shadow)}
-  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.primary{color:#11111B}}
-  :root[data-theme="dark"] .btn.primary{color:#11111B}
-  .btn.ghost{background:var(--surface);border-color:var(--line);color:var(--ink)}
-  .btn:hover{transform:translateY(-1px)}
-  .btn:focus-visible,a:focus-visible,button:focus-visible{outline:2.5px solid var(--accent);outline-offset:3px}
-  .hero-art{width:100%;max-width:290px;margin:0 auto;height:auto;display:block;filter:drop-shadow(0 22px 44px rgba(17,17,27,.28))}
+  .cta-row{display:flex;flex-wrap:wrap;gap:13px;margin-top:26px}
+  .btn{display:inline-flex;align-items:center;gap:8px;height:50px;padding:0 22px;border-radius:13px;
+    font-size:15.5px;font-weight:700;text-decoration:none;cursor:pointer;border:2px solid var(--ink);transition:transform .12s,box-shadow .12s}
+  .btn.primary{background:var(--accent);color:#11111B;box-shadow:var(--hard)}
+  .btn.ghost{background:var(--surface);color:var(--ink);box-shadow:var(--hard)}
+  .btn:hover{transform:translate(-2px,-2px);box-shadow:6px 6px 0 var(--ink)}
+  .btn:active{transform:translate(2px,2px);box-shadow:1px 1px 0 var(--ink)}
+  :root[data-theme="dark"] .btn:hover,@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn:hover{box-shadow:6px 6px 0 rgba(0,0,0,.55)}}
+  .btn:focus-visible,a:focus-visible,button:focus-visible{outline:3px solid var(--mauve);outline-offset:3px}
 
-  /* ---- the convergence playground (the special bit) ---- */
-  .play-sec{padding-top:clamp(40px,6vw,72px)}
-  .play-head{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;flex-wrap:wrap;margin-bottom:22px}
-  .play-head h2{font-size:clamp(26px,3.6vw,38px);font-weight:600}
-  .play-head p{color:var(--ink-soft);margin-top:10px;max-width:46ch;font-size:15.5px}
-  .play{border:1px solid var(--line);border-radius:22px;background:var(--surface);box-shadow:var(--shadow);overflow:hidden}
-  .netbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:16px 20px;border-bottom:1px solid var(--line);
-    background:var(--surface-2)}
-  .netbar .status{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:600}
-  .netbar .status .led{width:11px;height:11px;border-radius:50%;background:var(--peach);transition:background .25s}
+  .hero-art-wrap{position:relative;display:flex;justify-content:center}
+  .hero-art{width:100%;max-width:280px;height:auto;display:block;filter:drop-shadow(0 22px 40px rgba(17,17,27,.3))}
+  .sticker{position:absolute;font-weight:800;font-size:13px;letter-spacing:.02em;padding:8px 13px;border-radius:14px;
+    border:2px solid var(--ink);background:var(--surface);box-shadow:var(--hard);white-space:nowrap;z-index:2}
+  .sticker.s1{top:2%;right:-4%;transform:rotate(8deg);background:var(--green);color:#11111B}
+  .sticker.s2{bottom:8%;left:-6%;transform:rotate(-7deg);background:var(--pink);color:#11111B}
+  .sticker.s3{top:44%;right:-8%;transform:rotate(-4deg);background:var(--sky);color:#11111B}
+  @media(max-width:860px){.sticker.s3{display:none}.sticker.s1{right:2%}.sticker.s2{left:2%}}
+
+  /* ===== staircase divider ===== */
+  .stairs{display:block;width:100%;height:34px;color:var(--ink)}
+  .stairs path{fill:none;stroke:currentColor;stroke-width:2;opacity:.28}
+
+  /* ===== playground ===== */
+  .play-head h2{font-size:clamp(28px,4.4vw,46px);font-weight:900;letter-spacing:-.02em}
+  .play-head .sub{font-size:15px;color:var(--peach);font-weight:700;font-style:italic;margin-top:6px}
+  .play-head p{color:var(--ink-soft);margin-top:12px;max-width:52ch;font-size:15.5px}
+  .play{border:2px solid var(--ink);border-radius:22px;background:var(--surface);box-shadow:var(--hard);overflow:hidden;margin-top:24px}
+  .netbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:15px 20px;border-bottom:2px solid var(--ink);background:var(--surface-2)}
+  .netbar .status{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:700}
+  .netbar .status .led{width:12px;height:12px;border-radius:50%;background:var(--peach);border:2px solid var(--ink);transition:background .25s}
   .play.online .netbar .status .led{background:var(--green)}
-  .netbar .status .txt-off{color:var(--peach)} .netbar .status .txt-on{color:var(--green);display:none}
-  .play.online .netbar .status .txt-off{display:none} .play.online .netbar .status .txt-on{display:inline}
-  .toggle{position:relative;width:60px;height:32px;border-radius:999px;border:1px solid var(--line);background:var(--ground);cursor:pointer;transition:background .2s;flex:none}
-  .play.online .toggle{background:color-mix(in oklab,var(--green) 40%,var(--ground))}
-  .toggle::after{content:"";position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:var(--ink-soft);transition:transform .22s cubic-bezier(.2,.8,.2,1),background .2s}
-  .play.online .toggle::after{transform:translateX(28px);background:var(--green)}
-  .netbar .spring{margin-left:auto;display:flex;align-items:center;gap:18px}
-  .stat{font-size:12.5px;color:var(--ink-faint);white-space:nowrap}
+  .netbar .txt-off{color:var(--peach)} .netbar .txt-on{color:var(--green);display:none}
+  .play.online .netbar .txt-off{display:none} .play.online .netbar .txt-on{display:inline}
+  .toggle{position:relative;width:62px;height:34px;border-radius:999px;border:2px solid var(--ink);background:var(--ground);cursor:pointer;transition:background .2s;flex:none;box-shadow:var(--hard)}
+  .play.online .toggle{background:color-mix(in oklab,var(--green) 45%,var(--ground))}
+  .toggle::after{content:"";position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:var(--ink);transition:transform .22s cubic-bezier(.2,.8,.2,1)}
+  .play.online .toggle::after{transform:translateX(28px)}
+  .netbar .mood{font-size:26px;line-height:1;margin-left:2px;transition:transform .2s}
+  .netbar .spring{margin-left:auto;display:flex;align-items:center;gap:16px}
+  .stat{font-size:12.5px;color:var(--ink-faint);white-space:nowrap;font-weight:600}
   .stat b{color:var(--ink);font-variant-numeric:tabular-nums}
   .stat.kept b{color:var(--green)}
-  .converged{font-size:12.5px;font-weight:600;color:var(--green);opacity:0;transition:opacity .3s}
+  .converged{font-size:12.5px;font-weight:800;color:var(--green);opacity:0;transition:opacity .3s;text-transform:uppercase;letter-spacing:.04em}
   .play.synced .converged{opacity:1}
 
-  .devs{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line)}
+  .devs{display:grid;grid-template-columns:1fr 1fr;gap:2px;background:var(--ink)}
   @media(max-width:620px){.devs{grid-template-columns:1fr}}
-  .dev{background:var(--surface);padding:18px 18px 20px}
+  .dev{background:var(--surface);padding:18px}
   .dev-top{display:flex;align-items:center;gap:10px;margin-bottom:14px}
-  .dev-top .who{width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:15px;color:#fff;font-weight:700}
+  .dev-top .who{width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:15px;color:#11111B;font-weight:800;border:2px solid var(--ink)}
   .dev.a .who{background:var(--blue)} .dev.b .who{background:var(--mauve)}
-  .dev-top .nm{font-weight:600;font-size:15px}
-  .dev-top .off{margin-left:auto;font-size:11px;color:var(--peach);font-weight:600;letter-spacing:.03em}
+  .dev-top .nm{font-weight:700;font-size:15px}
+  .dev-top .off{margin-left:auto;font-size:11px;color:var(--peach);font-weight:700;letter-spacing:.03em;text-transform:uppercase}
   .play.online .dev-top .off{color:var(--green)}
-  .log{list-style:none;margin:0;padding:0;min-height:186px;display:flex;flex-direction:column;gap:7px}
+  .log{list-style:none;margin:0;padding:0;min-height:190px;display:flex;flex-direction:column;gap:7px}
   .ev{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:11px;background:var(--surface-2);
-    border:1px solid transparent;font-size:14px;animation:slot .35s cubic-bezier(.2,.8,.2,1) both}
-  /* the climb: each later step nudges right, echoing the mark */
-  .ev:nth-child(2){margin-left:9px}.ev:nth-child(3){margin-left:18px}.ev:nth-child(4){margin-left:27px}
-  .ev:nth-child(5){margin-left:36px}.ev:nth-child(6){margin-left:45px}
-  .ev .em{font-size:15px} .ev .ti{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .ev .hr{font-size:11.5px;color:var(--ink-faint);font-variant-numeric:tabular-nums}
-  .ev.pending{border-style:dashed;border-color:color-mix(in oklab,var(--peach) 55%,var(--line));background:transparent}
-  .ev.pending .hr::after{content:" · unsynced";color:var(--peach)}
-  .ev.mine{box-shadow:inset 3px 0 0 var(--who)}
-  @keyframes slot{from{opacity:0;transform:translateY(-6px) scale(.98)}to{opacity:1;transform:none}}
-  .dev-actions{display:flex;gap:8px;margin-top:14px}
-  .mini{flex:1;height:38px;border-radius:10px;border:1px solid var(--line);background:var(--ground);color:var(--ink);
-    font-size:13px;font-weight:550;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:transform .1s,border-color .14s}
-  .mini:hover{transform:translateY(-1px);border-color:color-mix(in oklab,var(--accent) 45%,var(--line))}
-  .mini:active{transform:translateY(0)}
-  .play-foot{padding:14px 20px;border-top:1px solid var(--line);font-size:13px;color:var(--ink-soft);display:flex;gap:14px;align-items:center;flex-wrap:wrap}
-  .play-foot .reset{margin-left:auto;background:none;border:0;color:var(--ink-faint);font-size:12.5px;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+    border:2px solid transparent;font-size:14px;font-weight:500;animation:slot .35s cubic-bezier(.2,.8,.2,1) both}
+  .ev:nth-child(2){margin-left:10px}.ev:nth-child(3){margin-left:20px}.ev:nth-child(4){margin-left:30px}
+  .ev:nth-child(5){margin-left:40px}.ev:nth-child(6){margin-left:50px}
+  .ev .em{font-size:15px}.ev .ti{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ev .hr{font-size:11.5px;color:var(--ink-faint);font-variant-numeric:tabular-nums;font-weight:600}
+  .ev.pending{border-style:dashed;border-color:var(--peach);background:transparent}
+  .ev.pending .hr::after{content:" · non sync";color:var(--peach)}
+  .ev.mine{box-shadow:inset 4px 0 0 var(--who)}
+  @keyframes slot{from{opacity:0;transform:translateY(-6px) scale(.97)}to{opacity:1;transform:none}}
+  .dev-actions{margin-top:14px}
+  .mini{width:100%;height:40px;border-radius:11px;border:2px solid var(--ink);background:var(--ground);color:var(--ink);
+    font-family:inherit;font-size:13.5px;font-weight:700;cursor:pointer;box-shadow:var(--hard);transition:transform .1s}
+  .mini:hover{transform:translate(-2px,-2px);box-shadow:5px 5px 0 var(--ink)}
+  .mini:active{transform:translate(1px,1px);box-shadow:1px 1px 0 var(--ink)}
+  .play-foot{padding:14px 20px;border-top:2px solid var(--ink);font-size:14px;color:var(--ink-soft);display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-weight:500;background:var(--surface-2)}
+  .play-foot i{color:var(--peach)}
+  .play-foot .reset{margin-left:auto;background:none;border:0;color:var(--ink-faint);font-size:12.5px;cursor:pointer;text-decoration:underline;text-underline-offset:3px;font-family:inherit;font-weight:600}
   .play-foot .reset:hover{color:var(--ink)}
 
-  /* ---- statement ---- */
-  .two{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:start}
-  @media(max-width:760px){.two{grid-template-columns:1fr;gap:26px}}
-  .statement{font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
-    font-size:clamp(23px,3.4vw,34px);line-height:1.32;letter-spacing:-.01em;max-width:20ch}
-  .prose p{color:var(--ink-soft);max-width:60ch} .prose p+p{margin-top:16px} .prose b{color:var(--ink);font-weight:600}
+  /* ===== statement + nonno ===== */
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:46px;align-items:start}
+  @media(max-width:760px){.two{grid-template-columns:1fr;gap:24px}}
+  .statement{font-family:"Fraunces",Georgia,serif;font-size:clamp(26px,4vw,40px);line-height:1.18;letter-spacing:-.015em;max-width:16ch;font-weight:800}
+  .statement em{font-style:italic;color:var(--peach)}
+  .prose p{color:var(--ink-soft);max-width:60ch}.prose p+p{margin-top:16px}.prose b{color:var(--ink);font-weight:700}
+  .nonno{display:flex;gap:16px;align-items:flex-start;margin-top:28px;padding:22px;border-radius:18px;
+    background:color-mix(in oklab,var(--peach) 13%,var(--surface));border:2px solid var(--ink);box-shadow:var(--hard);transform:rotate(-1deg)}
+  .nonno .face{font-size:34px;line-height:1;flex:none;transform:rotate(-8deg)}
+  .nonno q{font-family:"Fraunces",Georgia,serif;font-size:19px;line-height:1.38;quotes:"«" "»";display:block;color:var(--ink);font-weight:600;font-style:italic}
+  .nonno q i{color:var(--peach)}
+  .nonno .sig{display:block;margin-top:8px;font-size:12.5px;color:var(--ink-faint);letter-spacing:.02em;font-weight:600;font-style:normal;font-family:"Space Grotesk",sans-serif}
 
-  .section-head{max-width:54ch}
-  .section-head h2{font-size:clamp(28px,4vw,40px);font-weight:600;margin-top:12px}
-  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:36px}
+  /* ===== features ===== */
+  .section-head{max-width:56ch}
+  .section-head h2{font-size:clamp(28px,4.4vw,46px);font-weight:900;letter-spacing:-.02em;margin-top:10px}
+  .section-head .it-sub{color:var(--peach);font-style:italic;font-weight:700;font-size:15px;margin-top:8px}
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:36px}
   @media(max-width:820px){.cards{grid-template-columns:repeat(2,1fr)}}
   @media(max-width:520px){.cards{grid-template-columns:1fr}}
   .card{display:flex;flex-direction:column;gap:9px;padding:24px;background:var(--surface);
-    border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);transition:transform .14s,border-color .14s}
-  .card:hover{transform:translateY(-3px);border-color:color-mix(in oklab,var(--accent) 45%,var(--line))}
-  .card .ic{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;
-    background:color-mix(in oklab,var(--accent) 16%,var(--surface-2));margin-bottom:4px}
-  .card .ic svg{width:21px;height:21px;stroke:var(--accent-ink);fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
-  .card h3{font-size:18px;font-weight:600}
+    border:2px solid var(--ink);border-radius:18px;box-shadow:var(--hard);transition:transform .14s,box-shadow .14s}
+  .card:hover{transform:translate(-3px,-3px) rotate(-.6deg);box-shadow:8px 8px 0 var(--ink)}
+  :root[data-theme="dark"] .card:hover,@media(prefers-color-scheme:dark){:root:not([data-theme="light"]) .card:hover{box-shadow:8px 8px 0 rgba(0,0,0,.55)}}
+  .card .ic{width:42px;height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;border:2px solid var(--ink);margin-bottom:4px;background:var(--cc)}
+  .card .ic svg{width:22px;height:22px;stroke:#11111B;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+  .card h3{font-size:19px;font-weight:800;letter-spacing:-.01em}
   .card p{margin:0;font-size:14.5px;color:var(--ink-soft);line-height:1.55}
+  .card .kick{font-size:12px;font-style:italic;color:var(--peach);font-weight:700}
 
-  .spot{border-radius:22px;overflow:hidden;border:1px solid var(--line);box-shadow:var(--shadow);margin-top:36px;
-    background:linear-gradient(150deg,color-mix(in oklab,var(--lav) 15%,var(--surface)),var(--surface) 55%)}
+  /* ===== identity ===== */
+  .spot{border-radius:22px;overflow:hidden;border:2px solid var(--ink);box-shadow:var(--hard);margin-top:34px;
+    background:linear-gradient(150deg,color-mix(in oklab,var(--lav) 18%,var(--surface)),var(--surface) 55%)}
   .spot-in{display:grid;grid-template-columns:1fr 1fr;gap:0}
   @media(max-width:760px){.spot-in{grid-template-columns:1fr}}
   .spot-copy{padding:clamp(28px,4vw,44px)}
-  .spot-copy h3{font-size:clamp(22px,3vw,30px);font-weight:600}
+  .spot-copy h3{font-size:clamp(22px,3vw,30px);font-weight:900;letter-spacing:-.01em}
   .spot-copy p{color:var(--ink-soft);margin-top:14px;font-size:15.5px;max-width:42ch}
-  .idlist{display:flex;flex-direction:column;gap:1px;background:var(--line);border-left:1px solid var(--line)}
-  @media(max-width:760px){.idlist{border-left:0;border-top:1px solid var(--line)}}
+  .idlist{display:flex;flex-direction:column;gap:2px;background:var(--ink);border-left:2px solid var(--ink)}
+  @media(max-width:760px){.idlist{border-left:0;border-top:2px solid var(--ink)}}
   .id{background:var(--surface);padding:22px 26px;display:flex;gap:16px;align-items:flex-start}
-  .id .k{width:34px;height:34px;flex:none;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:17px;background:var(--surface-2)}
-  .id .t{font-size:16px;font-weight:600} .id .d{font-size:13.5px;color:var(--ink-soft);line-height:1.5;margin-top:2px}
-  .id .tag{margin-left:auto;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--green);font-weight:600;padding-top:3px;white-space:nowrap}
+  .id .k{width:36px;height:36px;flex:none;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;background:var(--surface-2);border:2px solid var(--ink)}
+  .id .t{font-size:16px;font-weight:800}.id .d{font-size:13.5px;color:var(--ink-soft);line-height:1.5;margin-top:2px}
+  .id .tag{margin-left:auto;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--green);font-weight:800;padding-top:3px;white-space:nowrap}
 
-  .plat{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:34px}
+  /* ===== get it ===== */
+  .plat{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:34px}
   @media(max-width:720px){.plat{grid-template-columns:1fr}}
-  .pcard{padding:26px 26px 24px;border:1px solid var(--line);border-radius:18px;background:var(--surface);box-shadow:var(--shadow)}
-  .pcard .badge{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-faint);font-weight:600}
-  .pcard h3{font-size:19px;font-weight:600;margin-top:6px}
+  .pcard{padding:26px;border:2px solid var(--ink);border-radius:18px;background:var(--surface);box-shadow:var(--hard)}
+  .pcard .badge{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#11111B;font-weight:800;background:var(--cc);border:2px solid var(--ink);padding:3px 9px;border-radius:8px;display:inline-block}
+  .pcard h3{font-size:20px;font-weight:900;margin-top:12px}
   .pcard p{color:var(--ink-soft);font-size:14.5px;margin:10px 0 14px;max-width:52ch}
-  .fpurl{display:block;overflow-x:auto;white-space:nowrap;background:var(--ground);border:1px solid var(--line);
+  .fpurl{display:block;overflow-x:auto;white-space:nowrap;background:var(--ground);border:2px solid var(--ink);
     border-radius:10px;padding:12px 14px;font-size:12px;color:var(--ink)}
   .fpurl .k{color:var(--accent-ink)}
   .note{font-size:12.5px;color:var(--ink-faint);margin-top:12px}
 
-  footer{border-top:1px solid var(--line);padding:38px 0 56px;color:var(--ink-faint);font-size:13.5px;margin-top:clamp(30px,5vw,60px)}
+  footer{border-top:2px solid var(--ink);padding:36px 0 40px;color:var(--ink-faint);font-size:13.5px;margin-top:clamp(28px,5vw,56px)}
   .foot{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;align-items:center}
-  footer a{color:var(--ink-soft);text-decoration:none} footer a:hover{color:var(--ink)}
-  .egg{max-width:1060px;margin:22px auto 0;padding:0 24px;font-size:12.5px;color:var(--ink-faint)}
-  .egg b{color:var(--ink-soft);font-weight:600}
+  footer a{color:var(--ink-soft);text-decoration:none;font-weight:600}footer a:hover{color:var(--ink)}
+  .egg{max-width:1080px;margin:20px auto 0;padding:0 24px;font-size:13px;color:var(--ink-faint)}
+  .egg b{color:var(--peach);font-weight:800}
 
-  /* ---- Nonno: the angry Italian conscience of the project ---- */
-  .nonno{display:flex;gap:16px;align-items:flex-start;margin-top:30px;padding:20px 22px;border-radius:16px;
-    background:color-mix(in oklab,var(--peach) 12%,var(--surface));border:1px solid color-mix(in oklab,var(--peach) 30%,var(--line))}
-  .nonno .face{font-size:30px;line-height:1;flex:none;transform:rotate(-6deg)}
-  .nonno q{font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;font-size:18px;line-height:1.4;
-    quotes:"«" "»";display:block;color:var(--ink)}
-  .nonno q i{color:var(--peach);font-style:italic}
-  .nonno .sig{display:block;margin-top:8px;font-size:12.5px;color:var(--ink-faint);letter-spacing:.02em}
-
-  .rise{opacity:0;transform:translateY(14px);animation:rise .7s cubic-bezier(.2,.7,.2,1) forwards}
+  .rise{opacity:0;transform:translateY(16px);animation:rise .7s cubic-bezier(.2,.7,.2,1) forwards}
   .rise.d1{animation-delay:.06s}.rise.d2{animation-delay:.13s}.rise.d3{animation-delay:.2s}
   @keyframes rise{to{opacity:1;transform:none}}
   @media(prefers-reduced-motion:reduce){.rise,.ev{animation:none;opacity:1;transform:none}#climb *{animation:none!important}}
@@ -202,7 +238,6 @@
   @keyframes pop{from{transform:scale(.2);opacity:0}to{transform:scale(1);opacity:1}}
 </style>
 
-<!-- the Scala mark: a calendar whose days ascend, the next one lit -->
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
   <symbol id="scala-mark" viewBox="0 0 1024 1024">
     <rect width="1024" height="1024" rx="232" fill="#11111b"/>
@@ -222,11 +257,11 @@
 <header>
   <div class="wrap bar">
     <a class="brand" href="#top" aria-label="Scala home">
-      <svg width="30" height="30" viewBox="0 0 1024 1024" aria-hidden="true"><use href="#scala-mark"/></svg>
-      <span class="name wm">Scala</span>
+      <svg width="32" height="32" viewBox="0 0 1024 1024" aria-hidden="true"><use href="#scala-mark"/></svg>
+      <span class="name disp">Scala</span>
     </a>
     <nav class="navlinks">
-      <a href="#try">Try it</a>
+      <a href="#try">Provalo</a>
       <a href="#features">Features</a>
       <a href="#identity">Identity</a>
       <a href="#get">Get it</a>
@@ -234,88 +269,96 @@
     </nav>
   </div>
 </header>
+<div class="marquee" aria-hidden="true">
+  <div class="track">
+    <span>🤌 Allora</span><span>· Subito</span><span>· Zero cloud</span><span>· Mamma mia</span><span>· 100% offline</span><span>· Basta server</span><span>· Che bello</span><span>· Andiamo</span><span>· Nonno-approved</span><span>· Perfetto</span>
+    <span>🤌 Allora</span><span>· Subito</span><span>· Zero cloud</span><span>· Mamma mia</span><span>· 100% offline</span><span>· Basta server</span><span>· Che bello</span><span>· Andiamo</span><span>· Nonno-approved</span><span>· Perfetto</span>
+  </div>
+</div>
 
 <a id="top"></a>
 <div class="hero">
   <div class="wrap hero-grid">
     <div>
-      <p class="eyebrow rise">Secure CALendar · nessun server è stato maltrattato</p>
-      <h1 class="rise d1">A calendar that<br><em>keeps its word</em> —<br>even off the grid.</h1>
-      <p class="lede rise d2">Scala is a shared calendar rebuilt on Logos. Your devices hold the same events and agree without a server in the middle — and each calendar is signed by a key you choose, down to a tap of your Keycard. <b style="color:var(--ink)">The cloud? Non ci serve.</b></p>
+      <p class="eyebrow rise">Secure CALendar · nessun server maltrattato</p>
+      <h1 class="disp rise d1">Un calendario<br>che <em>mantiene</em><br>la <span class="hl">parola.</span></h1>
+      <p class="lede rise d2">A shared calendar rebuilt on Logos. Your devices hold the same events and agree <b>without a server in the middle</b> — each calendar signed by a key you choose, down to a tap of your Keycard. <b>Il cloud? Non ci serve.</b></p>
       <div class="cta-row rise d2">
-        <a class="btn primary" href="#try">Play with it ↓</a>
+        <a class="btn primary" href="#try">Provalo — play with it ↓</a>
         <a class="btn ghost" href="#get">Get the app</a>
       </div>
       <br>
-      <a class="rooted rise d2" href="https://vpavlin.github.io/loam/"><span class="dot"></span>Grows in Loam — the local-first substrate</a>
+      <a class="rooted rise d2" href="https://vpavlin.github.io/loam/"><span class="dot"></span>Cresce nel Loam — the local-first substrate</a>
     </div>
-    <svg class="hero-art rise d3" viewBox="0 0 1024 1024" role="img" aria-label="The Scala mark: a calendar whose days climb upward, the next one lit green.">
-      <use href="#scala-mark"/>
-    </svg>
+    <div class="hero-art-wrap rise d3">
+      <span class="sticker s1">100% offline 🔌</span>
+      <span class="sticker s2">zero cloud ☁️✗</span>
+      <span class="sticker s3">Nonno-approved 🤌</span>
+      <svg class="hero-art" viewBox="0 0 1024 1024" role="img" aria-label="The Scala mark: a calendar whose days climb upward, the next one lit green.">
+        <use href="#scala-mark"/>
+      </svg>
+    </div>
   </div>
+  <div class="wrap"><svg class="stairs" viewBox="0 0 1000 34" preserveAspectRatio="none" aria-hidden="true"><path d="M0 32 H160 V24 H320 V16 H480 V24 H640 V12 H800 V20 H1000"/></svg></div>
 </div>
 
 <!-- ============ THE PLAYGROUND ============ -->
-<section id="try" class="play-sec">
+<section id="try" style="padding-top:clamp(28px,4vw,44px)">
   <div class="wrap">
     <div class="play-head">
-      <div>
-        <p class="eyebrow">Non ci credi? — try it yourself</p>
-        <h2>Break the internet. Watch it heal.</h2>
-        <p>Two people, one calendar. Add events on both while they're <b>offline</b> — then flip the network on and watch them agree. Same events, same order, nothing lost. <b>Non serve il cloud.</b></p>
-      </div>
+      <p class="eyebrow">Non ci credi?</p>
+      <h2 class="disp">Break the internet. Watch it heal.</h2>
+      <p class="sub">«Rompi pure la rete. Io non ho paura.» — Nonno</p>
+      <p>Two people, one calendar. Add events on both while they're <b>offline</b> — then flip the network on and watch them agree. Same events, same order, nothing lost. <b>Non serve il cloud.</b></p>
     </div>
 
     <div class="play" id="play">
       <div class="netbar">
         <div class="status" aria-live="polite">
           <span class="led"></span>
-          <span class="txt-off">Offline — editing in the dark</span>
+          <span class="txt-off">Offline — al buio</span>
           <span class="txt-on">Online — meshed &amp; synced</span>
         </div>
         <button class="toggle" id="netToggle" role="switch" aria-checked="false" aria-label="Toggle the network"></button>
+        <span class="mood" id="mood" title="Nonno's mood">🤌</span>
         <div class="spring">
-          <span class="stat">unsynced <b id="statPending">0</b></span>
+          <span class="stat">non sync <b id="statPending">0</b></span>
           <span class="stat kept">writes lost <b>0</b></span>
-          <span class="converged">✓ converged</span>
+          <span class="converged">✓ convergiuto</span>
         </div>
       </div>
 
       <div class="devs">
-        <div class="dev a" style="--who:var(--blue)">
-          <div class="dev-top"><span class="who">A</span><span class="nm">Ada's phone</span><span class="off" id="offA">local</span></div>
+        <div class="dev a">
+          <div class="dev-top"><span class="who">A</span><span class="nm">Il telefono di Ada</span><span class="off" id="offA">locale</span></div>
           <ul class="log" id="logA"></ul>
-          <div class="dev-actions">
-            <button class="mini" data-dev="a">＋ Add an event</button>
-          </div>
+          <div class="dev-actions"><button class="mini" data-dev="a">＋ Aggiungi — add event</button></div>
         </div>
-        <div class="dev b" style="--who:var(--mauve)">
-          <div class="dev-top"><span class="who">B</span><span class="nm">Bo's laptop</span><span class="off" id="offB">local</span></div>
+        <div class="dev b">
+          <div class="dev-top"><span class="who">B</span><span class="nm">Il laptop di Bo</span><span class="off" id="offB">locale</span></div>
           <ul class="log" id="logB"></ul>
-          <div class="dev-actions">
-            <button class="mini" data-dev="b">＋ Add an event</button>
-          </div>
+          <div class="dev-actions"><button class="mini" data-dev="b">＋ Aggiungi — add event</button></div>
         </div>
       </div>
 
       <div class="play-foot">
-        <span id="hint">Add a couple on each side while offline, then flip the switch. ☝️</span>
-        <button class="reset" id="reset">reset</button>
+        <span id="hint">«Allora. Add a few on each side while offline, then flip the switch.» — Nonno ☝️</span>
+        <button class="reset" id="reset">ricomincia (reset)</button>
       </div>
     </div>
   </div>
 </section>
 
-<section id="what" style="padding-top:clamp(30px,4vw,50px)">
+<section id="what" style="padding-top:clamp(20px,3vw,36px)">
   <div class="wrap two">
-    <p class="statement">A calendar the cloud can’t hold hostage.</p>
+    <p class="statement">A calendar the cloud can’t hold <em>ostaggio</em>.</p>
     <div class="prose">
       <p>What you just watched is the whole idea. Every change is a <b>sealed event with a hybrid-logical-clock stamp</b>; any device can carry it, in any order, and fold it into the same state. Offline isn’t a degraded mode — it’s the default, and the network is just a faster courier.</p>
       <p>Desktop (as a Basecamp module) and Android run the <b>identical fold</b>, so they agree byte-for-byte. Two people editing the same day with no signal both keep their change. The log converges; nobody arbitrates.</p>
       <div class="nonno">
         <span class="face" aria-hidden="true">🤌</span>
         <div>
-          <q>You lose the wifi and the whole calendar, <i>puf</i>, it disappears? Che disastro! In my day the appointment, it stayed put. Scala — <i>finalmente</i> — it stays put.</q>
+          <q>You lose the wifi and the whole calendar, <i>puf</i>, it disappears? Che disastro! In my day the appointment, it <i>stayed put</i>. Scala — finalmente — it stays put.</q>
           <span class="sig">— Nonno, unpaid technical advisor</span>
         </div>
       </div>
@@ -325,52 +368,58 @@
 
 <section id="features">
   <div class="wrap">
-    <p class="eyebrow">What it does</p>
-    <h2 class="section-head">A real calendar — that just happens to be unstoppable.</h2>
+    <p class="eyebrow">Cosa fa · what it does</p>
+    <h2 class="section-head disp">A real calendar — that just happens to be <em style="color:var(--peach);font-style:italic">unstoppabile</em>.</h2>
     <div class="cards">
       <div class="card">
-        <div class="ic"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 14-5M20 12a8 8 0 0 1-14 5"/><path d="M18 3v4h-4M6 21v-4h4"/></svg></div>
+        <div class="ic" style="--cc:var(--green)"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 14-5M20 12a8 8 0 0 1-14 5"/><path d="M18 3v4h-4M6 21v-4h4"/></svg></div>
         <h3>Converges, always</h3>
-        <p>An event-log CRDT with HLC ordering. Edit on a plane, sync on landing — no conflicts to resolve, no write ever lost. You saw it above.</p>
+        <p>An event-log CRDT with HLC ordering. Edit on a plane, sync on landing — no conflicts to resolve, no write ever lost.</p>
+        <span class="kick">— proprio come sopra ☝️</span>
       </div>
       <div class="card">
-        <div class="ic"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg></div>
+        <div class="ic" style="--cc:var(--blue)"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg></div>
         <h3>Actually a calendar</h3>
         <p>Times, all-day spans, locations, links, reminders, recurrence. Custom fields per calendar for when a title isn’t enough.</p>
+        <span class="kick">— mica un giocattolo</span>
       </div>
       <div class="card">
-        <div class="ic"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/></svg></div>
+        <div class="ic" style="--cc:var(--pink)"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/></svg></div>
         <h3>Shared, with roles</h3>
-        <p>Invite by link. Owners and editors write, viewers read, an Open toggle lets anyone add — all enforced by the fold, not by a gatekeeper server.</p>
+        <p>Invite by link. Owners and editors write, viewers read, an Open toggle lets anyone add — enforced by the fold, not a gatekeeper.</p>
+        <span class="kick">— la famiglia, insieme</span>
       </div>
       <div class="card">
-        <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 2 4 6v6c0 5 3.4 8 8 10 4.6-2 8-5 8-10V6z"/><path d="M9 12l2 2 4-4"/></svg></div>
+        <div class="ic" style="--cc:var(--yellow)"><svg viewBox="0 0 24 24"><path d="M12 2 4 6v6c0 5 3.4 8 8 10 4.6-2 8-5 8-10V6z"/><path d="M9 12l2 2 4-4"/></svg></div>
         <h3>Signed by your key</h3>
-        <p>Each calendar is authored by an identity you pick. Flip on <b>signatures-required</b> and the fold drops any unsigned write — phone and desktop alike.</p>
+        <p>Each calendar is authored by an identity you pick. Flip on <b>signatures-required</b> and the fold drops any unsigned write.</p>
+        <span class="kick">— niente scherzi</span>
       </div>
       <div class="card">
-        <div class="ic"><svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="8" cy="12" r="2.2"/><path d="M12 12h6M15 15h3"/></svg></div>
+        <div class="ic" style="--cc:var(--mauve)"><svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="8" cy="12" r="2.2"/><path d="M12 12h6M15 15h3"/></svg></div>
         <h3>Keycard-secured</h3>
-        <p>Bind a calendar to your Status Keycard and every edit is a tap on the card. The private key never leaves the hardware. Very hard to phish a chip.</p>
+        <p>Bind a calendar to your Status Keycard — every edit is a tap on the card. The private key never leaves the hardware.</p>
+        <span class="kick">— difficile fregare un chip</span>
       </div>
       <div class="card">
-        <div class="ic"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="7" height="7" rx="1.5"/><rect x="14" y="4" width="7" height="7" rx="1.5"/><rect x="3" y="15" width="7" height="5" rx="1.5"/><rect x="14" y="13" width="7" height="7" rx="1.5"/></svg></div>
+        <div class="ic" style="--cc:var(--sky)"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="7" height="7" rx="1.5"/><rect x="14" y="4" width="7" height="7" rx="1.5"/><rect x="3" y="15" width="7" height="5" rx="1.5"/><rect x="14" y="13" width="7" height="7" rx="1.5"/></svg></div>
         <h3>Desktop &amp; Android</h3>
-        <p>A Basecamp module and a native Android app, both full peers that hold their own history and heal the moment they meet again.</p>
+        <p>A Basecamp module and a native Android app, both full peers that hold their own history and heal the moment they meet.</p>
+        <span class="kick">— si ritrovano sempre</span>
       </div>
     </div>
   </div>
 </section>
 
-<section id="identity" style="background:var(--surface-2)">
+<section id="identity" style="background:var(--surface-2);border-top:2px solid var(--ink);border-bottom:2px solid var(--ink)">
   <div class="wrap">
-    <p class="eyebrow">Your key, your calendar</p>
-    <h2 class="section-head">One level up from “which account.”</h2>
-    <p class="section-head" style="margin-top:14px">Google Calendar lets you pick which account an event lands in. Scala moves that choice up a rung: a <b>calendar</b> is bound to an <b>identity</b>, and every event it holds is authored by that identity’s key. Mix hardware and software; keep work and personal on keys that never link back to each other.</p>
+    <p class="eyebrow">La tua chiave, il tuo calendario</p>
+    <h2 class="section-head disp">One rung up from “which account.”</h2>
+    <p class="section-head" style="margin-top:14px;color:var(--ink-soft)">Google Calendar lets you pick which account an event lands in. Scala moves that choice up a rung — a <b style="color:var(--ink)">calendar</b> is bound to an <b style="color:var(--ink)">identity</b>, and every event it holds is authored by that identity’s key. Mix hardware and software; keep <i class="it">lavoro</i> and <i class="it">famiglia</i> on keys that never link back to each other.</p>
     <div class="spot">
       <div class="spot-in">
         <div class="spot-copy">
-          <h3>Three kinds of key.</h3>
+          <h3 class="disp">Three kinds of key.</h3>
           <p>Bind any calendar to any of them — or mint a fresh one so its events can’t be tied to your others. A signatures-required calendar accepts writes only from its bound key; the fold quietly drops the rest.</p>
         </div>
         <div class="idlist">
@@ -385,18 +434,18 @@
 
 <section id="get">
   <div class="wrap">
-    <p class="eyebrow">Get it · andiamo</p>
-    <h2 class="section-head">Install on desktop or Android.</h2>
-    <p class="section-head" style="margin-top:14px">Open and self-hosted. Scala ships from a home-LAN repo today — add it from a device on the same network.</p>
+    <p class="eyebrow">Andiamo · get it</p>
+    <h2 class="section-head disp">Install on desktop or Android.</h2>
+    <p class="section-head" style="margin-top:14px;color:var(--ink-soft)">Open and self-hosted. Scala ships from a home-LAN repo today — add it from a device on the same network.</p>
     <div class="plat">
       <div class="pcard">
-        <span class="badge mono">Android</span>
+        <span class="badge" style="--cc:var(--green)">Android</span>
         <h3>F-Droid repo</h3>
         <p>Add the Loam F-Droid repo — the fingerprint pins it as its own source — then install Scala and let it update in place.</p>
         <code class="fpurl mono">https://192.168.0.152:8444/loam-fdroid/repo<span class="k">?fingerprint=</span>E7E9C568E721B8197C8D583A2F5B79E0A008FFB4734B48CC21BD50ED7CEE013B</code>
       </div>
       <div class="pcard">
-        <span class="badge mono">Desktop</span>
+        <span class="badge" style="--cc:var(--sky)">Desktop</span>
         <h3>Basecamp module</h3>
         <p>In Basecamp, add the vpavlin-home repo, then install <span class="mono">scala</span> and its view. Same fold as the phone — they converge.</p>
         <code class="fpurl mono">https://192.168.0.152:8444/basecamp/index.json</code>
@@ -409,18 +458,18 @@
 <footer>
   <div class="wrap foot">
     <div style="display:flex;align-items:center;gap:10px">
-      <svg width="22" height="22" viewBox="0 0 1024 1024" aria-hidden="true"><use href="#scala-mark"/></svg>
-      <span class="wm" style="font-size:16px;color:var(--ink-soft)">Scala</span>
+      <svg width="24" height="24" viewBox="0 0 1024 1024" aria-hidden="true"><use href="#scala-mark"/></svg>
+      <span class="disp" style="font-size:18px;font-weight:800;color:var(--ink-soft)">Scala</span>
       <span>— secure, shared, offline-first calendar.</span>
     </div>
     <div style="display:flex;gap:22px">
       <a href="https://github.com/vpavlin/scala">GitHub</a>
       <a href="https://vpavlin.github.io/loam/">Loam</a>
-      <a href="#try">Try it</a>
+      <a href="#try">Provalo</a>
       <a href="#get">Get it</a>
     </div>
   </div>
-  <p class="egg"><b>scala</b> — Italian for <i>staircase</i>. Also: Secure CALendar. Mostly: your days, one step up. Nonno approves. 🪜🤌</p>
+  <p class="egg"><b>scala</b> — Italian for <i>staircase</i>. Also: Secure CALendar. Mostly: your days, one step up. Nonno approva. 🪜🤌</p>
 </footer>
 
 <script>
@@ -430,17 +479,17 @@
   var logA=document.getElementById('logA'), logB=document.getElementById('logB');
   var statPending=document.getElementById('statPending');
   var hint=document.getElementById('hint');
+  var mood=document.getElementById('mood');
   var POOL=[
-    ['🧗','Climb day'],['☕','Coffee w/ the team'],['🌱','Water the plants'],['🎸','Band practice'],
-    ['📚','Library run'],['🍜','Ramen o’clock'],['🚲','Long ride'],['🎬','Movie night'],
-    ['🥾','Trail hike'],['🛠️','Fix the thing'],['🎂','Nan’s birthday'],['🧺','Laundry, ugh'],
-    ['✈️','Flight to Prague'],['🦷','Dentist'],['🏓','Ping-pong rematch']
+    ['🧗','Climb day'],['☕','Caffè with the team'],['🌱','Water the basil'],['🎸','Band practice'],
+    ['📚','Library run'],['🍝','Pasta o’clock'],['🚲','Long ride'],['🎬','Movie night'],
+    ['🥾','Trail hike'],['🛠️','Fix the thing'],['🎂','Nonna’s birthday'],['🧺','Laundry, uffa'],
+    ['✈️','Flight to Napoli'],['🦷','Dentista'],['🏓','Ping-pong rematch'],['🍕','Pizza, ovviamente']
   ];
   var state={online:false, ctr:0, poolIx:0, logs:{a:[], b:[]}};
-  // an event: {id,em,ti,hr,ctr,dev}
   function mk(dev){
     var p=POOL[state.poolIx % POOL.length]; state.poolIx++;
-    var hr=8+((state.poolIx*3)%12); // 8..19h, spreads the climb
+    var hr=8+((state.poolIx*3)%12);
     state.ctr++;
     return {id:dev+'-'+state.ctr, em:p[0], ti:p[1], hr:hr, ctr:state.ctr, dev:dev};
   }
@@ -452,49 +501,42 @@
   }
   function has(dev,id){ return state.logs[dev].some(function(e){return e.id===id;}); }
   function render(){
-    var view;
-    if(state.online){ view=merged(); }
-    var pend=0;
+    var view = state.online ? merged() : null;
     [['a',logA],['b',logB]].forEach(function(pair){
       var dev=pair[0], ul=pair[1];
       var items = state.online ? view : state.logs[dev].slice().sort(cmp);
       ul.innerHTML='';
       items.forEach(function(e){
         var li=document.createElement('li'); li.className='ev';
-        // offline: an event is "pending" until the network carries it to the other side
         var unsynced = !state.online && !has(dev==='a'?'b':'a', e.id);
-        if(unsynced){ li.className+=' pending'; }
+        if(unsynced) li.className+=' pending';
         if(e.dev===dev){ li.className+=' mine'; li.style.setProperty('--who', dev==='a'?'var(--blue)':'var(--mauve)'); }
-        li.innerHTML='<span class="em">'+e.em+'</span><span class="ti">'+e.ti+'</span><span class="hr">'+(e.hr)+':00</span>';
+        li.innerHTML='<span class="em">'+e.em+'</span><span class="ti">'+e.ti+'</span><span class="hr">'+e.hr+':00</span>';
         ul.appendChild(li);
       });
     });
-    // pending = events that live on only one side
-    if(!state.online){
-      var all=merged();
-      all.forEach(function(e){ if(!(has('a',e.id)&&has('b',e.id))) pend++; });
-    }
+    var pend=0;
+    if(!state.online){ merged().forEach(function(e){ if(!(has('a',e.id)&&has('b',e.id))) pend++; }); }
     statPending.textContent=pend;
     play.classList.toggle('online', state.online);
     play.classList.toggle('synced', state.online && merged().length>0);
-    if(state.online && merged().length>0){ hint.innerHTML='«Ecco! Both devices, the <i>same</i> calendar — and the order, perfetto. You doubted me?» — Nonno 🤌'; }
-    else if(pend>0){ hint.innerHTML='«Those dashed ones? They live on <i>one</i> phone only. Basta — flip the switch, subito!» — Nonno →'; }
-    else { hint.innerHTML='«Allora. Add a few on each side while offline, then flip the switch.» — Nonno ☝️'; }
+    if(state.online && merged().length>0){
+      mood.textContent='😌'; hint.innerHTML='«Ecco! Both devices, the <i>same</i> calendar — same order, perfetto. You doubted me?» — Nonno 🤌';
+    } else if(pend>0){
+      mood.textContent='😤'; hint.innerHTML='«Those dashed ones live on <i>one</i> device only. Basta — flip the switch, subito!» — Nonno →';
+    } else {
+      mood.textContent='🤌'; hint.innerHTML='«Allora. Add a few on each side while offline, then flip the switch.» — Nonno ☝️';
+    }
+    mood.style.transform = pend>0 ? 'rotate(-10deg) scale(1.08)' : 'none';
   }
   function add(dev){
     var e=mk(dev); state.logs[dev].push(e);
-    if(state.online){ // instantly propagate to the other side
-      var other=dev==='a'?'b':'a';
-      if(!has(other,e.id)) state.logs[other].push(e);
-    }
+    if(state.online){ var other=dev==='a'?'b':'a'; if(!has(other,e.id)) state.logs[other].push(e); }
     render();
   }
   function setOnline(on){
     state.online=on; toggle.setAttribute('aria-checked', on?'true':'false');
-    if(on){ // merge: both sides adopt the union
-      var u=merged();
-      state.logs.a=u.slice(); state.logs.b=u.slice();
-    }
+    if(on){ var u=merged(); state.logs.a=u.slice(); state.logs.b=u.slice(); }
     render();
   }
   toggle.addEventListener('click',function(){ setOnline(!state.online); });
@@ -504,7 +546,6 @@
   document.getElementById('reset').addEventListener('click',function(){
     state.logs={a:[],b:[]}; state.ctr=0; state.poolIx=0; setOnline(false);
   });
-  // seed a little so it isn't empty on arrival
   add('a'); add('b'); add('a');
   render();
 })();
