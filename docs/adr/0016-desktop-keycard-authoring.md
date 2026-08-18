@@ -4,6 +4,37 @@
   module; on-card path unbuilt — needs the card + a PC/SC reader + Alisher's keycard LGX)
 - **Date:** 2026-08-18
 
+## Update (2026-08-18): integration moved to loam_core — and a BLOCKER
+
+Identity became a **loam_core service** ([loam ADR 0004](https://github.com/vpavlin/loam/blob/master/docs/adr/0004-identity-as-a-loam-service.md)),
+so keycard on the desktop now belongs in **`loam_core.signDigest`** delegating to Alisher's keycard
+module — NOT in scala's core. scala must stay keycard-agnostic (it just consumes loam_core's identity
+list + labels). `scala-ui` was made agnostic (the `KeycardSign.qml` prototype deleted; keycard copy
+genericised). Everything through loam_core is **async**, which dissolves the sync/async worry below —
+scala calls `signDigestAsync`, and a keycard sign resolves after the tap.
+
+**BLOCKER (found while implementing):** `loam_core` is a universal/qt_glue module whose
+`LogosModuleContext` exposes **only `modules()` for DECLARED dependencies** (+ three path getters) —
+there is **no raw `callModule`/`getClient`** for an undeclared module. So loam_core can only call
+`delivery_module` + `ble_mesh`. Reaching Alisher's **optional** `keycard` module would require
+declaring it a **hard dependency**, and Basecamp has **no optional-dependency** concept — so loam_core
+would then **fail to load for every user without a PC/SC reader + the keycard LGX**. Unacceptable.
+
+Resolution options (a decision, not code): **(A)** add a `callModule`/`getClient` escape hatch to the
+universal context upstream (logos-cpp-sdk / logos-module-builder) — the clean fix, lets loam_core
+optionally call keycard; **(B)** do the keycard delegation at a QML layer that CAN `logos.callModule`
+any loaded module — but in **loam's** view (loam_ui), never scala's, to keep scala agnostic (awkward,
+since authoring is core-side); **(C)** a separate optional `loam_keycard` bridge module — same
+hard-dep problem one level down. **(A) is the right answer.** Until then, keycard-on-desktop is
+blocked on that SDK feature; the pieces below (enroll, `ecdsaRecover`, per-domain signing) are ready
+to drop into loam_core's `signDigest` the moment loam_core can reach the keycard module.
+
+One alignment note that is NOT blocked: mobile signs the card at `domainToSignPath("scala")`; loam_core
+must sign a scala keycard identity at the **same domain** so one physical card is one identity across
+phone + desktop (the user validated the phone→desktop verify direction already). So the keycard
+identity stored in loam_core must carry its **domain** (`"scala"`), and `signDigest` passes it to
+`requestSign(domain)`.
+
 ## Context
 
 [ADR 0010](0010-keycard-on-basecamp.md) chose the desktop Keycard path: consume Alisher's native

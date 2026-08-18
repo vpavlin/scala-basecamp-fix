@@ -526,7 +526,7 @@ Item {
         if (ev && ev.creatorId && !isEditorMe(c) && ev.creatorId !== a)
             return "Only the author can edit this event (created by " + shortAuthor(ev.creatorId) + "). You're signing as " + shortAuthor(a) + "."
         if (c.owner && a !== c.owner && !isEditorMe(c))
-            return "This calendar is owned by " + shortAuthor(c.owner) + ", but you're signing as " + shortAuthor(a) + ". If that owner was a Keycard re-enrolled at a new path, its address changed and this calendar is orphaned — make a new one, or bind an identity that owns/edits it."
+            return "This calendar is owned by " + shortAuthor(c.owner) + ", but you're signing as " + shortAuthor(a) + ". Make a new calendar, or bind an identity that owns or can edit it."
         if (c.open === false && !isEditorMe(c))
             return "\"" + c.name + "\" is closed — only its owner/editors can add events. You're signing as " + shortAuthor(a) + "."
         return "You can't write to \"" + c.name + "\" as " + shortAuthor(a) + "."
