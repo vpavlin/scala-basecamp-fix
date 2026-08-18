@@ -1,140 +1,118 @@
 # 16. Desktop Keycard authoring — the concrete integration
 
-- **Status:** proposed (design complete; view UX prototyped + render-verified with a mocked keycard
-  module; on-card path unbuilt — needs the card + a PC/SC reader + Alisher's keycard LGX)
+- **Status:** loam_core side **implemented + compile-verified** against the real keycard module
+  (2026-08-18). Remaining: scala's async authoring wiring (view/core) + on-card verification
+  (needs the card + a PC/SC reader + Alisher's keycard + keycard-ui LGX installed).
 - **Date:** 2026-08-18
 
-## Update (2026-08-18): integration moved to loam_core — and a BLOCKER
+## Update (2026-08-18): keycard now lives in loam_core — and the "BLOCKER" was wrong
 
-Identity became a **loam_core service** ([loam ADR 0004](https://github.com/vpavlin/loam/blob/master/docs/adr/0004-identity-as-a-loam-service.md)),
-so keycard on the desktop now belongs in **`loam_core.signDigest`** delegating to Alisher's keycard
-module — NOT in scala's core. scala must stay keycard-agnostic (it just consumes loam_core's identity
-list + labels). `scala-ui` was made agnostic (the `KeycardSign.qml` prototype deleted; keycard copy
-genericised). Everything through loam_core is **async**, which dissolves the sync/async worry below —
-scala calls `signDigestAsync`, and a keycard sign resolves after the tap.
+Identity is a **loam_core service** ([loam ADR 0004](https://github.com/vpavlin/loam/blob/master/docs/adr/0004-identity-as-a-loam-service.md)),
+so keycard on the desktop belongs in **loam_core**, delegating to Alisher's keycard module — NOT in
+scala's core. scala stays keycard-agnostic (it consumes loam_core's identity list + labels; the
+`KeycardSign.qml` prototype was deleted and the keycard copy genericised).
 
-**BLOCKER (found while implementing):** `loam_core` is a universal/qt_glue module whose
-`LogosModuleContext` exposes **only `modules()` for DECLARED dependencies** (+ three path getters) —
-there is **no raw `callModule`/`getClient`** for an undeclared module. So loam_core can only call
-`delivery_module` + `ble_mesh`. Reaching Alisher's **optional** `keycard` module would require
-declaring it a **hard dependency**, and Basecamp has **no optional-dependency** concept — so loam_core
-would then **fail to load for every user without a PC/SC reader + the keycard LGX**. Unacceptable.
+**RETRACTION of the earlier "BLOCKER".** A previous draft claimed loam_core *could not* reach the
+keycard module because the universal `LogosModuleContext` exposes only `modules()` for declared
+dependencies and has no raw `callModule`. That reasoning was wrong. The fix is the ordinary one:
+**declare `keycard` as a dependency** — exactly like `delivery_module` — and the module-builder
+generates a typed caller. Verified by building `loam_core` with `"dependencies": [… "keycard"]`:
+the codegen produced `keycard_api.h` (a full `Keycard` class with `requestSignAsync`,
+`checkSignStatusAsync`, `deriveKeyAsync`, `authorizeAsync`, … — every method in sync **and** async
+form, `std::string`-normalised from keycard's Qt `Q_INVOKABLE QString` surface). loam_core's impl
+then compiles calling `modules().keycard.requestSignAsync(...)`. There was never an SDK gap.
 
-Resolution options (a decision, not code): **(A)** add a `callModule`/`getClient` escape hatch to the
-universal context upstream (logos-cpp-sdk / logos-module-builder) — the clean fix, lets loam_core
-optionally call keycard; **(B)** do the keycard delegation at a QML layer that CAN `logos.callModule`
-any loaded module — but in **loam's** view (loam_ui), never scala's, to keep scala agnostic (awkward,
-since authoring is core-side); **(C)** a separate optional `loam_keycard` bridge module — same
-hard-dep problem one level down. **(A) is the right answer.** Until then, keycard-on-desktop is
-blocked on that SDK feature; the pieces below (enroll, `ecdsaRecover`, per-domain signing) are ready
-to drop into loam_core's `signDigest` the moment loam_core can reach the keycard module.
+**The real trade-off (decided): coupling.** Basecamp dependencies are load-time-mandatory (no
+optional deps), so declaring `keycard` makes it a **hard dependency of loam_core** — every app on
+loam_core (kym, qaku, perun) now requires the keycard module (+ its `pcsclite`/`keycard-qt`/
+`libsodium` runtime) installed to load, even with no reader. The keycard module loads idle without a
+card. **Decision (2026-08-18): keep it in loam_core** — identity is uniformly a loam service; the
+idle install is acceptable, especially for the LAN-repo deployment.
 
-One alignment note that is NOT blocked: mobile signs the card at `domainToSignPath("scala")`; loam_core
-must sign a scala keycard identity at the **same domain** so one physical card is one identity across
-phone + desktop (the user validated the phone→desktop verify direction already). So the keycard
-identity stored in loam_core must carry its **domain** (`"scala"`), and `signDigest` passes it to
-`requestSign(domain)`.
+## The contract (source-verified against xAlisher/keycard-basecamp master)
 
-## Context
+Two derivation subtrees, both keyed by the SAME indices `SHA256("logos-"+domain)[0:16]` as four
+hardened BIP32 indices (byte-identical to mobile loam-keycard `paths.ts`):
+- `domainToPath`  = **`m/43'/60'/1581'/…`** — *exportable*; used by `requestAuth`/`deriveKey`, which
+  hand back the raw 32-byte private key. **Do NOT use this for identity signing** — it is a
+  *different key/address* than the phone signs with, so it would break cross-platform identity.
+- `domainToSignPath` = **`m/43'/60'/1582'/…`** — *non-exportable*, on-card signing; used by
+  `requestSign`. **This is byte-identical to mobile's `domainToSignPath`**, so a card signs the same
+  identity on desktop and phone. This is the path we use.
 
-[ADR 0010](0010-keycard-on-basecamp.md) chose the desktop Keycard path: consume Alisher's native
-`keycard` Basecamp module (`keycard-qt` over PC/SC) via `logos.callModule("keycard","requestSign",…)`
-— on-card signing, key never leaves. This ADR pins the **concrete mechanism**, because the desktop
-signs differently from mobile: the scala **core signs in C++** (`scala_identity.hpp`:
-`canonicalMessage → sha256 → ecdsaSignLowS(priv, digest)`), while `requestSign` is a **QML**
-(`logos.callModule`) call the **view** makes. So a card signature has to cross the core↔view boundary.
+On-card signing API (the aligned path):
+- `requestSign({domain, payloadHash:<hex32>, caller, scheme:"ecdsa"})` → `{signId, status:"pending"}`.
+  No card needed at call time — the request is queued.
+- The user approves in **keycard-ui** (it polls `getPendingSigns` → `approveSign(signId, pin)`;
+  the PIN + tap live entirely there — loam_core never handles the PIN).
+- `checkSignStatus(signId)` → `pending` | `{status:"complete", signature:<hex>}` | `{status:"failed",
+  error}` | `{error:"Sign request not found"}` (expired). **`complete` is one-read-and-drop** — the
+  request is wiped after the first complete read, so read the signature on the first hit.
+- The ECDSA signature is **65 bytes `R‖S‖V`** (Ethereum shape). We drop `V` and low-S-normalise to the
+  **64-byte `r‖s`** scala/loam verify expects; the `V` byte also lets us **recover the pubkey** at
+  enrol without any extra API.
 
-Facts that shape the design (verified against source):
-- Core method surface (`calendar_module.cpp`, Q_INVOKABLE): `getIdentity`, `createCalendar`,
-  `createEvent(calId, eventJson)`, `updateEvent(eventJson)`, … — each **builds + signs + publishes**
-  in one call today.
-- `scala_identity.hpp` has `canonicalMessage`, `ecdsaSignLowS`, `verifyEvent(pub33, sig, digest)`,
-  `identityFromPriv` — but **no ECDSA public-key recovery** from a recoverable signature yet.
-- `dev` (the author address) is part of `canonicalMessage`, so it must be known **before** the digest
-  is computed — but the card's address is only known **after** we have its pubkey. Chicken-and-egg.
-- Alisher's `requestSign({domain, payloadHash, caller, scheme})` signs at a **domain-derived
-  non-exportable path** `m/43'/60'/1582'/…`; scala's `domainToSignPath("scala")` (loam-keycard
-  `paths.ts`, byte-identical to his `plugin.cpp`) is the same key mobile uses — one card, one identity.
+Note: wrong PIN / PIN-lockout do **not** surface as terminal `failed` — they hold at `pending`
+([keycard #93](https://github.com/xAlisher/keycard-basecamp/issues/93)). The poller must apply its
+own timeout (we cap at ~180 polls × 1 s).
 
-## Decision
+## Decision — async delegation in loam_core, event-driven, non-blocking
 
-**Enrol once, then sign per event** — mirror mobile's model, split across core + view.
+All keycard work is **async** (per "everything async in Basecamp") and never blocks loam_core's
+thread — it mirrors the existing `refreshMetrics` pattern (`…Async` caller + `QTimer` + an event).
 
-### 1. Enrol (one card tap) — resolve the chicken-and-egg
-The card's `domainToSignPath("scala")` key is stable, so fetch its **address/pubkey once** and cache
-it on the desktop (like mobile's SecureStore enrolment):
-- View calls `requestSign({domain:"scala", payloadHash: sha256("scala-keycard-enroll-v1"), scheme:"ecdsa"})`.
-- The result is a **recoverable** ECDSA sig (`R‖S‖V`); the **core recovers** the pubkey from
-  `(digest, r, s, V)` — a new `ecdsaRecover()` in `scala_identity.hpp` (OpenSSL
-  `ECDSA_SIG` + `EC_POINT` from recovery id), compress to 33B, `address = "0x"+sha256(pub)[24:64]`
-  (the existing `addressFor`). Cache `{cardAddress, cardPubHex}`.
-- (Alternative: if the `keycard` module exposes a `getPublicKey(domain)`, use it and skip recovery.
-  Recovery is the no-extra-API path and reuses primitives we already have.)
+**Enrol** — `enrollKeycard(label, domain, ref)`:
+1. compute an enrol digest `sha256("loam-keycard-enroll-v1:"+domain)`;
+2. `requestSignAsync({domain, payloadHash:digest, caller:"loam", scheme:"ecdsa"})` → `signId`;
+3. self-rescheduling `checkSignStatusAsync` poll until `complete`;
+4. `ecdsaRecover(digest, R‖S‖V)` → the card's pubkey/address (key never leaves the card);
+5. store `{id, kind:"keycard", label, domain, address, pubHex}` (public material only);
+6. emit `keycardSignResult(ref, meta)`.
 
-### 2. Per-event sign — core builds unsigned, view gets it card-signed, core attaches
-Add a **keycard authoring mode** to the core (selected when the calendar's identity is the enrolled
-card). Two new Q_INVOKABLE methods make the boundary crossing explicit and keep all crypto in C++:
-- **`beginKeycardEvent(type, calId, payloadJson) → {eventJson, digestHex}`** — build the event with
-  `dev = cardAddress` (cached), stamp HLC, compute `canonicalMessage → sha256`, return it **unsigned**
-  + the hex digest. Nothing is published yet.
-- View: `requestSign({domain:"scala", payloadHash: digestHex, caller:"scala", scheme:"ecdsa"})` →
-  poll `checkSignStatus` → `{signature}` (64B `r‖s`, low-S — normalise if needed).
-- **`attachAndPublishKeycardEvent(eventJson, sigHex) → ok`** — set `e.pub = cardPubHex`,
-  `e.sig = sigHex`, `verifyEvent` locally (reject a bad sig), then append + publish through the
-  normal path.
+**Sign per event** — `keycardSign(containerId, digestHex, ref)`:
+1. resolve the container's bound keycard identity (kind must be `keycard`);
+2. `requestSignAsync` at the identity's `domain` + poll as above;
+3. on `complete`: `compact64LowS(65B)` → 64B; **guard** by recovering the pubkey and comparing to the
+   enrolled `pubHex` (rejects a *wrong card* with a clear error);
+4. emit `keycardSignResult(ref, {sig, pub, address})`.
 
-The view drives the UX between the two calls: a "hold your Keycard" overlay while polling, a friendly
-error on `rejected`/timeout (Alisher's poller leaves wrong-PIN/lockout at `pending` — the view needs
-its own timeout), and a retry.
+`ref` is a caller-chosen correlation id (scala uses the pending event's id / `"enroll:<domain>"`), so
+scala matches each async result to the write it is authoring.
 
-### 3. Card use is per-calendar OPT-IN; no dependency declaration
-Alisher's guide says to add `"dependencies": ["keycard"]`, but that's wrong for scala:
-- **Basecamp's manifest `dependencies` is a hard, all-must-be-present list** — there is no
-  optional/soft-dependency concept. Declaring `keycard` would make Basecamp refuse to load `scala_ui`
-  for every user who doesn't have the keycard module + a reader — breaking the app for almost everyone.
-  So **do NOT declare it** (keep `["scala"]`).
-- **A module being installed does not mean the user wants scala to use the card.** Someone may have
-  keycard installed for another app. So detection is NOT the gate. The gate is **explicit user
-  intent**: a calendar is bound to "sign with Keycard" (the desktop analogue of mobile's per-calendar
-  keycard identity, [ADR 0009](0009-per-calendar-identity.md)). Only a keycard-bound calendar ever
-  calls the module.
-- **Graceful absence for an opted-in calendar.** `KeycardSign.qml` wraps every
-  `logos.callModule("keycard",…)` in try/catch (`_call`), so if the user turned on Keycard signing
-  but the module/reader is absent, the write fails with a clear message ("Keycard signing is on for
-  this calendar, but the keycard module isn't installed / no reader") — never a crash. Detection is
-  only for that message, never a UI gate.
+**All crypto stays in loam_core** (`loam_identity.hpp`): `ecdsaRecover` (pubkey from `R‖S‖V`) and
+`compact64LowS` (65B→64B low-S) were added beside the existing `identityFromPriv`/`ecdsaSignLowS`.
+A keycard identity holds **no private key** — `signDigest` for it returns a `keycard-delegated`
+sentinel; callers must use `keycardSign` instead.
 
-### 4. No fold / wire change
+## No fold / wire change
 A card-signed event is a normal signed event (`pub`/`sig`/`dev`) — it verifies identically to a
-software-signed one on every peer, and **signatures-required** ([ADR 0015](0015-full-form-calendar-create.md))
-accepts it and drops unsigned writes. No cert, no cert-aware verify (that was the *no-reader* fallback
-in ADR 0010; with a reader we sign directly).
+software-signed one on every peer, and always-require-signatures
+([ADR 0015](0015-full-form-calendar-create.md)) accepts it and drops unsigned writes.
 
-## Consequences
+## What is DONE vs. what remains
 
-- **One card = one identity across phone + desktop** — same `domainToSignPath("scala")` key; a
-  card-owned calendar authored on the phone is editable on Basecamp with the same card, and vice versa.
-- **All crypto stays in the core** (recovery, digest, verify); the view only shuttles the digest out
-  and the signature back — so the trust surface isn't spread into QML.
-- **New core surface** (needs a core build): `ecdsaRecover`, `beginKeycardEvent`,
-  `attachAndPublishKeycardEvent`, an enrol/cache path, and a per-calendar "sign with keycard" flag.
-  Desktop stays otherwise single-identity ([ADR 0013](0013-permission-transparency.md)).
-- **Dependencies:** a USB PC/SC contactless reader + Alisher's `keycard-core.lgx`/`keycard-ui.lgx`
-  installed; his module is pre-release/experimental — the `requestSign` contract is coded-to-doc, not
-  yet confirmed live.
+**Done + compile-verified (2026-08-18), no card required:**
+- `keycard` declared as a loam_core dependency; typed `modules().keycard.*` caller generates
+  (`nix build ./core#generate` emits `keycard_api.h`).
+- `loam_identity.hpp`: `ecdsaRecover`, `compact64LowS`, and the **keycard identity kind** (storage,
+  `metaFor`/`listIdentities`/`exists`, `addKeycardIdentity`/`removeKeycardIdentity`).
+- `loam_core_impl`: `enrollKeycard` / `keycardSign` / `removeKeycardIdentity` + the
+  `keycardSignResult` event + the async poll helpers. `nix build ./core#lib` compiles clean.
 
-## What is prepped now (card-free) vs. needs the card
+**Remaining — scala async authoring wiring (view/core, no card):**
+- scala's `mkEvent` already reads the identity meta; branch on `kind=="keycard"`: instead of the
+  synchronous `signDigest`, call `keycardSign(calId, digestHex, ref)`, park the unsigned event, and
+  on `keycardSignResult(ref, …)` attach `{sig,pub}` and publish. The view drives a "hold your
+  Keycard" overlay for the pending window and a friendly error on `{error}`/timeout.
+- An enrol action in **loam's** UI (never scala's — scala stays agnostic): `enrollKeycard("…",
+  "scala", ref)`, then the card identity appears in the shared identity list scala already renders.
 
-**Done + render-verified (mocked keycard module in `qml-harness`):** the view-side `requestSign` +
-poll + tap-overlay + reject/timeout flow, and the `logos.callModule("keycard",…)` contract usage.
-
-**Needs the card (+ reader + keycard LGX) — the on-card test checklist:**
-1. Enrol: `requestSign` the enrol digest → core `ecdsaRecover` → assert the recovered **address equals
-   the mobile Keycard address** for `domainToSignPath("scala")` (the whole point).
-2. Author an event via `beginKeycardEvent` → `requestSign` → `attachAndPublishKeycardEvent`; assert
-   `verifyEvent` passes locally.
-3. Confirm the card-signed desktop event **syncs to the phone** and verifies there.
-4. Turn on **signatures-required** for that calendar; confirm an unsigned write is dropped and the
-   card-signed one survives, on both clients.
+**Needs the card (+ reader + keycard & keycard-ui LGX) — the on-card test checklist:**
+1. Enrol: `enrollKeycard` → assert the recovered **address equals the mobile Keycard address** for
+   domain `"scala"` (the whole point — one card, one identity across phone + desktop).
+2. Author an event via `keycardSign`; assert `verifyEvent` passes locally and the 64B low-S sig is
+   accepted on fold.
+3. Confirm the card-signed desktop event **syncs to the phone** and verifies there, and vice-versa.
+4. Wrong card: sign a calendar bound to card A with card B → the pubkey-recovery guard rejects it.
 5. Poller: pull the card mid-sign / enter a wrong PIN → the view times out with a clear error, not a
-   hang.
+   hang (wrong PIN stays `pending`; our ~180 s cap resolves it).
