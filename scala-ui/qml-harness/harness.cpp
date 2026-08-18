@@ -100,6 +100,7 @@ int main(int argc, char **argv) {
     QTimer::singleShot(2400, [&] { runJs(&view, "openNewEvent()"); });
     QTimer::singleShot(2800, [&] { grab(&view, out + "/02-new-own.png"); runJs(&view, "eventPopup.close()"); });
     QTimer::singleShot(3100, [&] { runJs(&view, "newCalPopup.open()"); });
+    QTimer::singleShot(3300, [&] { runJs(&view, "newCalIdentity = 'soft-1'"); }); // simulate picking "Work"
     QTimer::singleShot(3500, [&] { grab(&view, out + "/03-newcal.png"); runJs(&view, "newCalPopup.close()"); });
     QTimer::singleShot(3800, [&] { runJs(&view, "openCalSettings(calById(\"c1\"))"); });
     QTimer::singleShot(4200, [&] { grab(&view, out + "/04-settings.png"); runJs(&view, "calSettingsPopup.close()"); });

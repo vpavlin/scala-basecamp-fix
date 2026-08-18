@@ -100,7 +100,7 @@ public:
     std::string parseShareLink(const std::string& link);
 
     /// Handle a scala:// share link (join the calendar).
-    bool handleShareLink(const std::string& link);
+    bool handleShareLink(const std::string& link, const std::string& identityId = "");
 
     // ── Search API ───────────────────────────────────────────────────────────
     /// Search events across all calendars by title/description/location. Returns JSON array string.

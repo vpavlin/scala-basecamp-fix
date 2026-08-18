@@ -493,7 +493,7 @@ std::string ScalaImpl::parseShareLink(const std::string& link) {
     if (id.empty() || key.empty()) return "";
     return json{{"id", id}, {"key", key}, {"name", name}}.dump();
 }
-bool ScalaImpl::handleShareLink(const std::string& link) {
+bool ScalaImpl::handleShareLink(const std::string& link, const std::string& identityId) {
     std::string parsed = parseShareLink(link);
     if (parsed.empty()) return false;
     json j = json::parse(parsed, nullptr, false);
@@ -501,6 +501,9 @@ bool ScalaImpl::handleShareLink(const std::string& link) {
     if (id.empty() || key.empty()) return false;
     m_store->upsertCalendar({ id, key, name, "" });
     m_sync->startSync(id, key);
+    // Bind the chosen identity (loam ADR 0004) so YOUR events on this calendar are authored by it.
+    // (The owner is the inviter; this only sets who signs the joiner's writes.) Empty → default.
+    if (!identityId.empty()) { try { modules().loam_core.bindContainer(id, identityId); } catch (...) {} }
     sendSyncReq(id);   // just joined → pull history
     return true;
 }

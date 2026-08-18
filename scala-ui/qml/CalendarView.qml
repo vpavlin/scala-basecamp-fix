@@ -1100,6 +1100,7 @@ Item {
     property bool newCalOpen: true          // Open (anyone can add) vs Restricted at create time
     property bool newCalSigReq: false       // signatures-required (fold drops unsigned) at create time
     property string newCalIdentity: ""      // "author as" (loam identity) — "" = default
+    property string joinIdentity: ""         // "author as" for a joined calendar
     property string ncNewType: "text"   // staged field type in the new-calendar add-row
     // Add a custom field to the NEW-calendar schema (mirrors addSchemaField).
     function addNcField() {
@@ -1176,12 +1177,14 @@ Item {
                         Repeater {
                             model: root.identities
                             Rectangle {
-                                property bool sel: (root.newCalIdentity === "" ? (modelData.id === root.defaultIdentityId) : (root.newCalIdentity === modelData.id))
+                                // selected = explicitly picked, or (nothing picked yet) the default. Inlined
+                                // like the working field-type chips so the binding re-evaluates on click.
                                 radius: Theme.spacing.radiusSmall
-                                color: sel ? Theme.palette.accentOrange : Theme.palette.backgroundSecondary
-                                border.width: 1; border.color: sel ? Theme.palette.accentOrange : Theme.palette.borderHairline
+                                color: (root.newCalIdentity === modelData.id || (root.newCalIdentity === "" && modelData.id === root.defaultIdentityId)) ? Theme.palette.primary : Theme.palette.backgroundSecondary
+                                border.width: 1
+                                border.color: (root.newCalIdentity === modelData.id || (root.newCalIdentity === "" && modelData.id === root.defaultIdentityId)) ? Theme.palette.primary : Theme.palette.borderHairline
                                 implicitHeight: chipT.implicitHeight + 10; implicitWidth: chipT.implicitWidth + 22
-                                LogosText { id: chipT; anchors.centerIn: parent; text: modelData.label; font.pixelSize: 12; color: parent.sel ? Theme.palette.background : Theme.palette.text }
+                                LogosText { id: chipT; anchors.centerIn: parent; text: modelData.label; font.pixelSize: 12; color: Theme.palette.text }
                                 MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.newCalIdentity = modelData.id }
                             }
                         }
@@ -1556,19 +1559,36 @@ Item {
         anchors.centerIn: Overlay.overlay
         width: 420; modal: true; padding: Theme.spacing.large
         background: Rectangle { radius: Theme.spacing.radiusMedium; color: Theme.palette.backgroundElevated; border.width: 1; border.color: Theme.palette.borderHairline }
-        onOpened: joinLink.text = ""
+        onOpened: { joinLink.text = ""; root.joinIdentity = "" }
         ColumnLayout {
             anchors.fill: parent; spacing: Theme.spacing.small
             LogosText { text: "Join a shared calendar"; color: Theme.palette.text; font.pixelSize: 18; font.weight: Theme.typography.weightMedium }
             LogosText { text: "Paste the scala:// invite link"; color: Theme.palette.textTertiary; font.pixelSize: 12 }
             Field { id: joinLink; Layout.fillWidth: true; placeholderText: "scala://join?..." }
+            // Author as — which identity signs YOUR events on this calendar (owner stays the inviter).
+            LogosText { text: "Author as"; color: Theme.palette.textTertiary; font.pixelSize: 11; Layout.topMargin: Theme.spacing.small }
+            Flow {
+                Layout.fillWidth: true; spacing: Theme.spacing.small
+                Repeater {
+                    model: root.identities
+                    Rectangle {
+                        radius: Theme.spacing.radiusSmall
+                        color: (root.joinIdentity === modelData.id || (root.joinIdentity === "" && modelData.id === root.defaultIdentityId)) ? Theme.palette.primary : Theme.palette.backgroundSecondary
+                        border.width: 1
+                        border.color: (root.joinIdentity === modelData.id || (root.joinIdentity === "" && modelData.id === root.defaultIdentityId)) ? Theme.palette.primary : Theme.palette.borderHairline
+                        implicitHeight: jChipT.implicitHeight + 10; implicitWidth: jChipT.implicitWidth + 22
+                        LogosText { id: jChipT; anchors.centerIn: parent; text: modelData.label; font.pixelSize: 12; color: Theme.palette.text }
+                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.joinIdentity = modelData.id }
+                    }
+                }
+            }
             RowLayout {
                 Layout.fillWidth: true; Layout.topMargin: Theme.spacing.small
                 Item { Layout.fillWidth: true }
                 LogosButton { text: "Cancel"; onClicked: joinPopup.close() }
                 LogosButton {
                     text: "Join"; enabled: joinLink.text.trim().length > 0
-                    onClicked: { root.core("handleShareLink", [joinLink.text.trim()]); joinPopup.close(); root.refresh() }
+                    onClicked: { root.core("handleShareLink", [joinLink.text.trim(), root.joinIdentity]); joinPopup.close(); root.refresh() }
                 }
             }
         }
