@@ -96,6 +96,13 @@ Item {
         if (!root.ready) return
         refreshIdentities()
         calendars = j(core("listCalendars", []), [])
+        // Resolve each calendar's authoring identity ADDRESS (loam_core binding) for permission checks.
+        var ca = {}
+        for (var ci = 0; ci < calendars.length; ci++) {
+            var im = root.j(loamCore("identityForContainer", [calendars[ci].id]), null)
+            ca[calendars[ci].id] = (im && im.address) ? im.address : ""
+        }
+        root.calAddr = ca
         var all = []
         for (var i = 0; i < calendars.length; i++) {
             var evs = j(core("listEvents", [calendars[i].id]), [])
@@ -497,10 +504,16 @@ Item {
     property var evCals: []                 // cached writable-calendar list for the event modal's picker (stable → currentIndex resolves)
     // Two-rule permissions (mirror the fold): owner/editors do anything; viewers read-only;
     // everyone else may ADD iff Open, and edit/delete only the events they authored.
-    function isEditorMe(c) { if (!c) return true; if (c.owner === myIdentity) return true; var r = c.roles || {}; return r[myIdentity] === "editor" || r[myIdentity] === "admin" }
-    function isViewerMe(c) { return !!c && (c.roles || {})[myIdentity] === "viewer" }
+    // Permission checks must use the LOAM identity that actually authors on THIS calendar (its bound
+    // identity), not scala's core getIdentity — events are signed via loam_core now (loam ADR 0004).
+    // calAddr[calId] = that address; falls back to the default identity's address.
+    property var calAddr: ({})
+    function defaultAddr() { for (var i = 0; i < identities.length; i++) if (identities[i].id === defaultIdentityId) return identities[i].address; return "" }
+    function addrFor(c) { return (c && root.calAddr[c.id]) ? root.calAddr[c.id] : defaultAddr() }
+    function isEditorMe(c) { if (!c) return true; var a = addrFor(c); if (c.owner === a) return true; var r = c.roles || {}; return r[a] === "editor" || r[a] === "admin" }
+    function isViewerMe(c) { if (!c) return false; return (c.roles || {})[addrFor(c)] === "viewer" }
     function canAddTo(c) { if (isEditorMe(c)) return true; if (isViewerMe(c)) return false; return !c || c.open !== false }
-    function canEditEvent(c, ev) { if (isEditorMe(c)) return true; if (isViewerMe(c)) return false; return !!ev && ev.creatorId === myIdentity }
+    function canEditEvent(c, ev) { if (isEditorMe(c)) return true; if (isViewerMe(c)) return false; return !!ev && ev.creatorId === addrFor(c) }
     // Event editor read-only: a NEW event needs add rights; an EXISTING event needs edit
     // rights on THAT event (yours, or you're an editor). Reactive to editCalId/editingEvent.
     readonly property bool eventReadOnly: editingEvent ? !canEditEvent(calById(editCalId), editingEvent) : !canAddTo(calById(editCalId))
@@ -508,7 +521,7 @@ Item {
     // is myIdentity; when desktop gains per-calendar identities, resolve the bound one here.
     function readonlyReason(c, ev) {
         if (!c) return ""
-        var a = myIdentity
+        var a = root.addrFor(c)
         if (isViewerMe(c)) return "You're a viewer on \"" + c.name + "\" — read-only."
         if (ev && ev.creatorId && !isEditorMe(c) && ev.creatorId !== a)
             return "Only the author can edit this event (created by " + shortAuthor(ev.creatorId) + "). You're signing as " + shortAuthor(a) + "."
@@ -1347,9 +1360,9 @@ Item {
     }
     function canManage(calId) {
         var c = calById(calId); if (!c) return false
-        if (c.owner && c.owner === myIdentity) return true
+        var a = root.addrFor(c); if (c.owner && c.owner === a) return true
         var r = c.roles || {}
-        return r[myIdentity] === "editor" || r[myIdentity] === "admin"
+        return r[a] === "editor" || r[a] === "admin"
     }
     function addMember() {
         var id = setNewMember.text.trim(); if (id === "") return
