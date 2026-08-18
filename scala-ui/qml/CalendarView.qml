@@ -805,7 +805,7 @@ Item {
 
             // note when editing a recurring series
             LogosText {
-                visible: root.editingRecurring()
+                visible: !!root.editingRecurring()
                 text: "Part of a repeating event — changes apply to the whole series."
                 color: Theme.palette.textTertiary; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true
             }
@@ -886,17 +886,6 @@ Item {
                 }
             }
 
-            // View-only notice — say WHY (viewer / not-your-event / can't-add).
-            LogosText {
-                visible: root.eventReadOnly
-                text: {
-                    var c = root.calById(root.editCalId)
-                    if (root.isViewerMe(c)) return "View only — you have read-only access to this calendar."
-                    if (root.editingEvent) return "View only — you can only edit events you created."
-                    return "View only — you can't add events to this calendar."
-                }
-                color: Theme.palette.warning; font.pixelSize: 12; wrapMode: Text.WordWrap; Layout.fillWidth: true
-            }
             // Inline validation error (only while editable).
             LogosText {
                 visible: !root.eventReadOnly && root.eventError() !== ""

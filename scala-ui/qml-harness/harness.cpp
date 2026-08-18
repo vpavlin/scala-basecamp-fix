@@ -42,7 +42,7 @@ QString MockLogos::callModule(const QString &mod, const QString &method, const Q
         return QString(R"([{"id":"e1","calendarId":"c1","title":"Their event","startTime":%1,"endTime":%2,"creatorId":"0xowner"}])")
             .arg(EV_START).arg(EV_END);
     if (method == "createCalendar") return "\"cNEW\""; // JSON-encoded id (like the real core) — must be j()-unwrapped
-    if (method == "getIdentity") return "0xme00000000000000000000000000000000000000";
+    if (method == "getIdentity") return "\"0xme00000000000000000000000000000000000000\"";
     if (method == "diagnostics")
         return QString(R"({"deliveryStatus":"Connected","ctxReady":true,"calendarCount":1,"eventCount":1,"identity":"0xme00000000000000000000000000000000000000","dataDir":"/tmp/scala","calendars":[]})");
     return ""; // createCalendar/updateCalendarMeta/createEvent/etc → success no-op
@@ -89,8 +89,12 @@ int main(int argc, char **argv) {
     QTimer::singleShot(1600, [&] { runJs(&view, "openEditEvent(events[0])"); });
     QTimer::singleShot(2000, [&] { grab(&view, out + "/01-edit-others.png"); runJs(&view, "eventPopup.close()"); });
     QTimer::singleShot(2400, [&] { runJs(&view, "openNewEvent()"); });
-    QTimer::singleShot(2800, [&] { grab(&view, out + "/02-new-own.png"); });
-    QTimer::singleShot(3200, [&] { app.quit(); });
+    QTimer::singleShot(2800, [&] { grab(&view, out + "/02-new-own.png"); runJs(&view, "eventPopup.close()"); });
+    QTimer::singleShot(3100, [&] { runJs(&view, "newCalPopup.open()"); });
+    QTimer::singleShot(3500, [&] { grab(&view, out + "/03-newcal.png"); runJs(&view, "newCalPopup.close()"); });
+    QTimer::singleShot(3800, [&] { runJs(&view, "openCalSettings(calById(\"c1\"))"); });
+    QTimer::singleShot(4200, [&] { grab(&view, out + "/04-settings.png"); });
+    QTimer::singleShot(4600, [&] { app.quit(); });
     return app.exec();
 }
 #include "harness.moc"
