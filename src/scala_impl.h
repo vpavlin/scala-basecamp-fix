@@ -32,6 +32,15 @@ public:
     std::string getIdentity() const;
     void setIdentity(const std::string& pubkeyHex);
 
+    /// Enrol a physical Keycard as a loam identity (delegates entirely to loam_core; scala holds no
+    /// keycard logic). `domain` should be "scala" so one card is one identity across phone + desktop.
+    /// Async: returns a ref; progress + completion arrive on keycardStatus (then refresh identities).
+    std::string enrollKeycard(const std::string& label, const std::string& domain);
+
+    /// Snapshot of the current/last Keycard op for the poll-based view (mirrors the keycardStatus
+    /// event): {active, purpose, phase, ref, calId, error?}. Drives the "hold your Keycard" overlay.
+    std::string keycardState();
+
     // ── Calendar CRUD ────────────────────────────────────────────────────────
     /// Create a new calendar. Returns the calendar ID.
     std::string createCalendar(const std::string& name, const std::string& color, const std::string& identityId = "");
@@ -126,6 +135,11 @@ logos_events:
     /// Emitted when the module identity changes.
     void identityChanged();
 
+    /// Progress of an async Keycard authoring/enrol op (scala ADR 0016). statusJson =
+    /// {purpose:"event"|"enroll", phase:"pending"|"done"|"failed", error?}. The view shows a
+    /// "hold your Keycard" overlay on pending and clears it on done/failed. calId is "" for enrol.
+    void keycardStatus(const std::string& calId, const std::string& ref, const std::string& statusJson);
+
 private:
     CalendarStore* m_store = nullptr;
     CalendarSync* m_sync = nullptr;
@@ -141,6 +155,15 @@ private:
     scala::HLC nextHlc();
     scala::Event mkEvent(const std::string& type, const scala::json& payload, const std::string& calId = "");
     void publishAndApply(const std::string& calId, const scala::Event& e);  // append locally + broadcast
+    // Author a user write: if the calendar is bound to a KEYCARD identity, sign async via loam_core
+    // (card tap) and publish on completion; otherwise sign + publish synchronously. SYNC_REQ never
+    // routes here (no card tap for reconciliation). (scala ADR 0016)
+    void authorAndPublish(const std::string& type, const scala::json& payload, const std::string& calId);
+    bool authorEvent(const std::string& type, const scala::json& payload, const std::string& calId);  // true = handled async (keycard)
+    void emitKcStatus(const std::string& calId, const std::string& ref, const char* purpose, const char* phase, const std::string& error);
+    struct PendingKc { std::string calId; scala::Event event; };
+    std::map<std::string, PendingKc> m_pendingKc;   // events awaiting a card signature, keyed by event id (== ref)
+    std::string m_kcState = "{\"active\":false}";   // last keycard op snapshot, polled by keycardState()
     void applyIncoming(const std::string& calId, const std::string& eventJson);  // merge a received event
     // ── catch-up (qaku SYNC_REQ + seed) ──────────────────────────────────────
     void onSyncReq(const std::string& calId, const nlohmann::json& req);  // serve ONLY the delta a peer lacks (logos_sync catch-up)

@@ -22,6 +22,7 @@ class MockLogos : public QObject {
     Q_OBJECT
 public:
     explicit MockLogos(QObject *p = nullptr) : QObject(p) {}
+    bool kcPending = false;   // flips true once enrollKeycard is called → keycardState reports pending
     // NOTE: defined OUT OF LINE below — moc's parser chokes on raw string literals inside
     // an inline class body, so keep the class declaration clean.
     Q_INVOKABLE QString callModule(const QString &mod, const QString &method, const QVariant &args);
@@ -46,9 +47,16 @@ QString MockLogos::callModule(const QString &mod, const QString &method, const Q
     // pending (so the "hold your Keycard" overlay renders for the screenshot).
     if (method == "requestSign") return QString(R"({"signId":"sig-1","status":"pending"})");
     if (method == "checkSignStatus") return QString(R"({"signId":"sig-1","status":"pending"})");
-    // Mock loam_core's identity service (loam ADR 0004) for the Identities panel.
+    // Keycard authoring (scala ADR 0016): enrollKeycard flips a pending state that keycardState()
+    // reports, so the "hold your Keycard" overlay renders. removeKeycardIdentity is a no-op.
+    if (method == "enrollKeycard") { kcPending = true; return "\"enroll:scala:mock\""; }
+    if (method == "keycardState")
+        return kcPending ? QString(R"({"active":true,"purpose":"enroll","phase":"pending","ref":"enroll:scala:mock"})")
+                         : QString(R"({"active":false})");
+    // Mock loam_core's identity service (loam ADR 0004) for the Identities panel. Includes a keycard
+    // identity so the 💳 badge + removal render.
     if (method == "listIdentities")
-        return QString(R"([{"id":"device","kind":"device","label":"This device","address":"0xme00000000000000000000000000000000000000","pubHex":"02aa"},{"id":"soft-1","kind":"soft","label":"Work","address":"0xwork1111111111111111111111111111111111","pubHex":"03bb"}])");
+        return QString(R"([{"id":"device","kind":"device","label":"This device","address":"0xme00000000000000000000000000000000000000","pubHex":"02aa"},{"id":"soft-1","kind":"soft","label":"Work","address":"0xwork1111111111111111111111111111111111","pubHex":"03bb"},{"id":"keycard-1","kind":"keycard","label":"My Keycard","domain":"scala","address":"0xcard2222222222222222222222222222222222","pubHex":"02cc"}])");
     if (method == "getDefaultIdentityId") return QString(R"("device")");
     if (method == "identityForContainer") return QString(R"({"id":"device","kind":"device","label":"This device","address":"0xme00000000000000000000000000000000000000","pubHex":"02aa"})");
     if (method == "getIdentity") return "\"0xme00000000000000000000000000000000000000\"";
@@ -106,7 +114,10 @@ int main(int argc, char **argv) {
     QTimer::singleShot(4200, [&] { grab(&view, out + "/04-settings.png"); runJs(&view, "calSettingsPopup.close()"); });
     QTimer::singleShot(4500, [&] { runJs(&view, "refreshIdentities(); identitiesPopup.open()"); });
     QTimer::singleShot(4900, [&] { grab(&view, out + "/05-identities.png"); });
-    QTimer::singleShot(5300, [&] { app.quit(); });
+    // Keycard overlay: trigger enrol → keycardState() reports pending → the 700ms poll opens it.
+    QTimer::singleShot(5100, [&] { runJs(&view, "core('enrollKeycard', ['My Keycard','scala']); identitiesPopup.close()"); });
+    QTimer::singleShot(6100, [&] { grab(&view, out + "/06-keycard-overlay.png"); });
+    QTimer::singleShot(6500, [&] { app.quit(); });
     return app.exec();
 }
 #include "harness.moc"

@@ -1,8 +1,8 @@
 # 16. Desktop Keycard authoring — the concrete integration
 
-- **Status:** loam_core side **implemented + compile-verified** against the real keycard module
-  (2026-08-18). Remaining: scala's async authoring wiring (view/core) + on-card verification
-  (needs the card + a PC/SC reader + Alisher's keycard + keycard-ui LGX installed).
+- **Status:** loam_core delegation **+ scala async authoring** implemented, compile- and
+  render-verified (2026-08-18). Remaining: on-card verification only (needs the card + a PC/SC
+  reader + Alisher's keycard + keycard-ui LGX installed).
 - **Date:** 2026-08-18
 
 ## Update (2026-08-18): keycard now lives in loam_core — and the "BLOCKER" was wrong
@@ -99,13 +99,17 @@ software-signed one on every peer, and always-require-signatures
 - `loam_core_impl`: `enrollKeycard` / `keycardSign` / `removeKeycardIdentity` + the
   `keycardSignResult` event + the async poll helpers. `nix build ./core#lib` compiles clean.
 
-**Remaining — scala async authoring wiring (view/core, no card):**
-- scala's `mkEvent` already reads the identity meta; branch on `kind=="keycard"`: instead of the
-  synchronous `signDigest`, call `keycardSign(calId, digestHex, ref)`, park the unsigned event, and
-  on `keycardSignResult(ref, …)` attach `{sig,pub}` and publish. The view drives a "hold your
-  Keycard" overlay for the pending window and a friendly error on `{error}`/timeout.
-- An enrol action in **loam's** UI (never scala's — scala stays agnostic): `enrollKeycard("…",
-  "scala", ref)`, then the card identity appears in the shared identity list scala already renders.
+**Done + render-verified (2026-08-18), no card required — scala async authoring:**
+- Core: `authorAndPublish` routes every user write (CAL_META/EVENT_PUT/EVENT_DEL/MEMBER_SET) through
+  `authorEvent`, which for a `kind=="keycard"` calendar builds the unsigned event, calls
+  `keycardSign(calId, digestHex, ref)`, and parks it; `onKeycardSignResult` attaches `{sig,pub}` and
+  publishes. **SYNC_REQ never routes here** (it keeps the local key via `mkEvent`'s
+  `keycard-delegated` fallback — no card tap for reconciliation). `enrollKeycard` + a `keycardState`
+  poll snapshot + the `keycardStatus` event round it out.
+- View (`CalendarView.qml`, poll-based like the rest): a 💳 badge + removal for keycard identities,
+  a "💳 Enroll Keycard" action in the Identities panel (delegates to loam — scala holds no keycard
+  logic), and a poll-driven "hold your Keycard" overlay (spinner while pending, error on failure).
+  Render-verified in `qml-harness` (`shots/05-identities.png`, `shots/06-keycard-overlay.png`).
 
 **Needs the card (+ reader + keycard & keycard-ui LGX) — the on-card test checklist:**
 1. Enrol: `enrollKeycard` → assert the recovered **address equals the mobile Keycard address** for

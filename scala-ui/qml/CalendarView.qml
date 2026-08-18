@@ -60,6 +60,25 @@ Item {
         return m && m.id ? m.id : root.defaultIdentityId
     }
 
+    // ── keycard authoring (scala ADR 0016) — poll the core snapshot; drive the overlay ─────────
+    // A write on a keycard-owned calendar (or an enrol) signs asynchronously in loam via a card tap;
+    // scala reports progress through keycardState(). We poll it fast and show a "hold your Keycard"
+    // overlay while pending, an error on failure, and refresh on success.
+    property var kc: ({ active: false })
+    property string kcLastRef: ""
+    function pollKeycard() {
+        if (!root.ready) return
+        var s = root.j(root.core("keycardState", []), { active: false })
+        var prevPhase = root.kc.phase, prevRef = root.kc.ref
+        root.kc = s
+        if (s.phase === "pending") { if (!keycardOverlay.visible) keycardOverlay.open() }
+        else if (s.ref && (s.ref !== root.kcLastRef)) {          // a terminal result we haven't shown yet
+            root.kcLastRef = s.ref
+            if (s.phase === "done") { keycardOverlay.close(); root.refresh() }
+            // "failed" → keep the overlay open showing the error (user closes it)
+        }
+    }
+
     // ── state ────────────────────────────────────────────────────────────────
     property var calendars: []          // [{id,name,color,encryptionKey,...}]
     property var events: []             // flat list across all calendars
@@ -89,6 +108,13 @@ Item {
             root.computeSoon()
             if (diagPopup.visible) root.diag = root.j(root.core("diagnostics", []), null)
         }
+    }
+
+    // Keycard progress needs a snappier poll than the 3s data refresh (a card tap resolves in a few
+    // seconds and the overlay must appear/clear promptly).
+    Timer {
+        interval: 700; running: root.ready; repeat: true
+        onTriggered: root.pollKeycard()
     }
 
     // ── data ─────────────────────────────────────────────────────────────────
@@ -1081,15 +1107,19 @@ Item {
                         ColumnLayout {
                             id: idCol; width: parent.width; spacing: 0
                             LogosText {
-                                text: (modelData.id === root.defaultIdentityId ? "★ " : "  ") + modelData.label + "  ·  " + modelData.kind
+                                text: (modelData.id === root.defaultIdentityId ? "★ " : "  ") + modelData.label
+                                      + "  ·  " + (modelData.kind === "keycard" ? "💳 Keycard" : modelData.kind)
                                 color: Theme.palette.text; font.pixelSize: 13
                             }
                             LogosText { text: (modelData.address || "").substring(0, 14) + "…" + (modelData.address || "").slice(-4); color: Theme.palette.textTertiary; font.pixelSize: 10; font.family: "monospace" }
                         }
                     }
                     LogosButton {
-                        visible: modelData.kind === "soft"; text: "✕"
-                        onClicked: { root.loamCore("removeSoftIdentity", [modelData.id]); root.refreshIdentities() }
+                        visible: modelData.kind === "soft" || modelData.kind === "keycard"; text: "✕"
+                        onClicked: {
+                            root.loamCore(modelData.kind === "keycard" ? "removeKeycardIdentity" : "removeSoftIdentity", [modelData.id])
+                            root.refreshIdentities()
+                        }
                     }
                 }
             }
@@ -1099,6 +1129,16 @@ Item {
                 LogosButton {
                     text: "+ Add"
                     onClicked: { root.loamCore("addSoftIdentity", [newIdField.text.trim() || "Identity"]); newIdField.text = ""; root.refreshIdentities() }
+                }
+            }
+            // Enrol a physical Keycard as a loam identity (loam owns all keycard logic; scala just
+            // triggers it + shows the overlay). One card = one identity across phone + desktop.
+            RowLayout {
+                Layout.fillWidth: true; spacing: Theme.spacing.small
+                LogosTextField { id: kcLabelField; Layout.fillWidth: true; placeholderText: "Keycard identity name" }
+                LogosButton {
+                    text: "💳 Enroll Keycard"
+                    onClicked: { root.core("enrollKeycard", [kcLabelField.text.trim() || "My Keycard", "scala"]); kcLabelField.text = ""; identitiesPopup.close() }
                 }
             }
             RowLayout {
@@ -1720,6 +1760,47 @@ Item {
                 }
             }
             RowLayout { Layout.fillWidth: true; Item { Layout.fillWidth: true } LogosButton { text: "Close"; onClicked: diagPopup.close() } }
+        }
+    }
+
+    // ── Keycard overlay (scala ADR 0016) — shown while a card tap is pending, or on failure ──────
+    Popup {
+        id: keycardOverlay
+        anchors.centerIn: Overlay.overlay
+        width: 420; modal: true; closePolicy: Popup.NoAutoClose; padding: Theme.spacing.large
+        background: Rectangle { radius: Theme.spacing.radiusMedium; color: Theme.palette.backgroundElevated; border.width: 1; border.color: Theme.palette.borderHairline }
+        readonly property bool failed: root.kc && root.kc.phase === "failed"
+        readonly property bool enrolling: root.kc && root.kc.purpose === "enroll"
+        ColumnLayout {
+            width: parent.width; spacing: Theme.spacing.medium
+            LogosText {
+                text: keycardOverlay.failed ? "⚠️  Keycard error"
+                      : (keycardOverlay.enrolling ? "💳  Enrolling your Keycard" : "💳  Sign with your Keycard")
+                color: Theme.palette.text; font.pixelSize: 18; font.weight: Theme.typography.weightMedium
+            }
+            // A tiny rotating arc while pending (no BusyIndicator dependency).
+            Rectangle {
+                visible: !keycardOverlay.failed
+                Layout.alignment: Qt.AlignHCenter
+                width: 34; height: 34; radius: 17; color: "transparent"
+                border.width: 3; border.color: Theme.palette.primary
+                Rectangle { width: 8; height: 8; radius: 4; color: Theme.palette.backgroundElevated; anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter; anchors.topMargin: -1 }
+                RotationAnimation on rotation { from: 0; to: 360; duration: 1000; loops: Animation.Infinite; running: keycardOverlay.visible && !keycardOverlay.failed }
+            }
+            LogosText {
+                Layout.fillWidth: true; wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignHCenter
+                text: keycardOverlay.failed ? (root.kc.error || "The Keycard operation failed.")
+                      : "Hold your Keycard to the reader and approve the request in the Keycard UI (enter your PIN there)."
+                color: keycardOverlay.failed ? Theme.palette.error : Theme.palette.textTertiary; font.pixelSize: 13
+            }
+            RowLayout {
+                Layout.fillWidth: true; Layout.topMargin: Theme.spacing.small
+                Item { Layout.fillWidth: true }
+                LogosButton {
+                    text: keycardOverlay.failed ? "Close" : "Cancel"
+                    onClicked: { keycardOverlay.close(); if (root.kc && root.kc.ref) root.kcLastRef = root.kc.ref }
+                }
+            }
         }
     }
 }

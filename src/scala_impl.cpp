@@ -161,6 +161,55 @@ void ScalaImpl::publishAndApply(const std::string& calId, const scala::Event& e)
     m_store->appendEvent(calId, e);                        // persist locally first
     m_sync->sendEvent(calId, scala::eventToJson(e).dump()); // then broadcast (no-op if not syncing)
 }
+
+// ── keycard-aware authoring (scala ADR 0016) ─────────────────────────────────
+void ScalaImpl::emitKcStatus(const std::string& calId, const std::string& ref,
+                             const char* purpose, const char* phase, const std::string& error) {
+    json s{{"purpose", purpose}, {"phase", phase}, {"ref", ref}, {"calId", calId},
+           {"active", std::string(phase) == "pending"}};
+    if (!error.empty()) s["error"] = error;
+    m_kcState = s.dump();               // poll snapshot for the view (basecamp 0.2.0 is poll-based)
+    keycardStatus(calId, ref, s.dump()); // + the event, for event-capable hosts
+}
+
+std::string ScalaImpl::keycardState() { return m_kcState; }
+
+// If calId is bound to a KEYCARD identity, build the unsigned event, request an on-card signature
+// via loam_core (async), park it keyed by its id, and return true. The signature arrives on
+// onKeycardSignResult, which attaches it and publishes. Returns false for device/soft identities.
+bool ScalaImpl::authorEvent(const std::string& type, const json& payload, const std::string& calId) {
+    if (calId.empty()) return false;
+    std::string kind, signer, domain;
+    try {
+        json meta = json::parse(modules().loam_core.identityForContainer(calId), nullptr, false);
+        if (meta.is_object()) { kind = meta.value("kind", std::string()); signer = meta.value("address", std::string()); }
+    } catch (...) {}
+    if (kind != "keycard" || signer.empty()) return false;
+
+    scala::Event e; e.v = 1; e.id = generateUuid(); e.type = type; e.payload = payload;
+    e.dev = signer; e.hlc = nextHlc(); e.hlc.dev = signer;   // author = the card's address (same as fold sees)
+    std::string digestHex = scala::toHexS(scala::sha256b(scala::strBytes(scala::canonicalMessage(e))).data(), 32);
+    const std::string ref = e.id;
+    m_pendingKc[ref] = PendingKc{calId, e};
+    emitKcStatus(calId, ref, "event", "pending", "");
+    try { modules().loam_core.keycardSign(calId, digestHex, ref); }
+    catch (...) { m_pendingKc.erase(ref); emitKcStatus(calId, ref, "event", "failed", "keycard call failed"); }
+    return true;
+}
+
+void ScalaImpl::authorAndPublish(const std::string& type, const json& payload, const std::string& calId) {
+    if (authorEvent(type, payload, calId)) return;             // keycard: async, publishes on the tap
+    publishAndApply(calId, mkEvent(type, payload, calId));     // device/soft: sign + publish now
+}
+
+std::string ScalaImpl::enrollKeycard(const std::string& label, const std::string& domain) {
+    const std::string dom = domain.empty() ? std::string("scala") : domain;
+    const std::string ref = "enroll:" + dom + ":" + generateUuid();
+    emitKcStatus("", ref, "enroll", "pending", "");
+    try { modules().loam_core.enrollKeycard(label.empty() ? dom : label, dom, ref); }
+    catch (...) { emitKcStatus("", ref, "enroll", "failed", "enroll call failed"); }
+    return ref;
+}
 void ScalaImpl::applyIncoming(const std::string& calId, const std::string& eventJson) {
     json j = json::parse(eventJson, nullptr, false);
     if (j.is_discarded() || !j.is_object()) return;
@@ -310,6 +359,27 @@ void ScalaImpl::onContextReady() {
             if (m_sync && m_sync->ready())
                 for (const auto& c : m_store->calendars()) sendSyncReq(c.id);
         });
+
+    // Keycard authoring (scala ADR 0016): loam_core signs a keycard-owned write asynchronously (card
+    // tap in keycard-ui) and delivers the result here, matched by ref. For a parked EVENT we attach
+    // {sig,pub} and publish; an ENROL ref (no parked event) just surfaces its status to the view.
+    modules().loam_core.onKeycardSignResult([this](const std::string& ref, const std::string& resultJson) {
+        json r = json::parse(resultJson, nullptr, false);
+        const bool err = !r.is_object() || r.contains("error");
+        const std::string emsg = r.is_object() ? r.value("error", std::string()) : std::string("bad result");
+        auto it = m_pendingKc.find(ref);
+        if (it == m_pendingKc.end()) {   // enrol (or an already-resolved ref)
+            emitKcStatus("", ref, "enroll", err ? "failed" : "done", emsg);
+            return;
+        }
+        PendingKc pk = it->second; m_pendingKc.erase(it);
+        if (err) { emitKcStatus(pk.calId, ref, "event", "failed", emsg); return; }
+        pk.event.pub = r.value("pub", std::string());
+        pk.event.sig = r.value("sig", std::string());
+        if (pk.event.pub.empty() || pk.event.sig.empty()) { emitKcStatus(pk.calId, ref, "event", "failed", "empty signature"); return; }
+        publishAndApply(pk.calId, pk.event);          // now it's a fully-signed event
+        emitKcStatus(pk.calId, ref, "event", "done", "");
+    });
 }
 
 void ScalaImpl::ensureDelivery() { if (m_sync) m_sync->bootstrap(); }
@@ -334,7 +404,7 @@ std::string ScalaImpl::createCalendar(const std::string& name, const std::string
     // Bind the chosen identity in loam_core BEFORE authoring cal.meta, so the OWNER (the first
     // cal.meta's author) IS that identity (loam ADR 0004). Empty → the default identity.
     if (!identityId.empty()) { try { modules().loam_core.bindContainer(id, identityId); } catch (...) {} }
-    publishAndApply(id, mkEvent(scala::ET::CAL_META, json{{"name", name}, {"color", color}}, id));
+    authorAndPublish(scala::ET::CAL_META, json{{"name", name}, {"color", color}}, id);
     return id;
 }
 // #7/#8: edit shared calendar metadata — {name?,color?,description?,schema?,open?} (LWW cal.meta).
@@ -347,14 +417,14 @@ bool ScalaImpl::updateCalendarMeta(const std::string& calId, const std::string& 
     if (in.contains("schema") && in["schema"].is_array()) p["schema"] = in["schema"];
     if (in.contains("open") && in["open"].is_boolean()) p["open"] = in["open"];  // Open/Restricted toggle (two-rule perms)
     if (p.empty()) return false;
-    publishAndApply(calId, mkEvent(scala::ET::CAL_META, p, calId));
+    authorAndPublish(scala::ET::CAL_META, p, calId);
     return true;
 }
 // #3: grant/revoke a member by identity — role is "admin"|"viewer"|"remove". The fold
 // admits this only if WE are owner/admin, so a viewer calling it is a no-op everywhere.
 bool ScalaImpl::setMemberRole(const std::string& calId, const std::string& member, const std::string& role) {
     if (member.empty()) return false;
-    publishAndApply(calId, mkEvent(scala::ET::MEMBER_SET, json{{"member", member}, {"role", role}}, calId));
+    authorAndPublish(scala::ET::MEMBER_SET, json{{"member", member}, {"role", role}}, calId);
     return true;
 }
 // #4: per-event edit history — every event.put/del touching this id, in log order,
@@ -400,7 +470,7 @@ std::string ScalaImpl::createEvent(const std::string& calendarId, const std::str
     if (p.is_discarded() || !p.is_object()) return "";
     p["id"] = generateUuid();
     p.erase("calendarId"); p.erase("creatorId");   // set by the fold
-    publishAndApply(calendarId, mkEvent(scala::ET::EVENT_PUT, p, calendarId));
+    authorAndPublish(scala::ET::EVENT_PUT, p, calendarId);
     return p["id"].get<std::string>();
 }
 std::string ScalaImpl::createEventAt(const std::string& calendarId, const std::string& title,
@@ -413,7 +483,7 @@ std::string ScalaImpl::createEventAt(const std::string& calendarId, const std::s
     p["title"] = title;
     p["startTime"] = start;
     p["endTime"] = end;
-    publishAndApply(calendarId, mkEvent(scala::ET::EVENT_PUT, p, calendarId));
+    authorAndPublish(scala::ET::EVENT_PUT, p, calendarId);
     return p["id"].get<std::string>();
 }
 std::string ScalaImpl::updateEvent(const std::string& eventJson) {
@@ -423,7 +493,7 @@ std::string ScalaImpl::updateEvent(const std::string& eventJson) {
     if (calId.empty()) return "";
     std::string id = p["id"].get<std::string>();
     p.erase("calendarId"); p.erase("creatorId");
-    publishAndApply(calId, mkEvent(scala::ET::EVENT_PUT, p, calId));
+    authorAndPublish(scala::ET::EVENT_PUT, p, calId);
     return id;
 }
 bool ScalaImpl::deleteEvent(const std::string& id) {
@@ -432,7 +502,7 @@ bool ScalaImpl::deleteEvent(const std::string& id) {
         json f = scala::foldCalendar(c.id, m_store->log(c.id));
         for (const auto& ev : f["events"])
             if (ev.value("id", std::string()) == id) {
-                publishAndApply(c.id, mkEvent(scala::ET::EVENT_DEL, json{{"id", id}}, c.id));
+                authorAndPublish(scala::ET::EVENT_DEL, json{{"id", id}}, c.id);
                 return true;
             }
     }
