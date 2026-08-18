@@ -210,7 +210,7 @@ export function EventModal({
               <View style={s.tzRow}>
                 <Text style={[s.label, { marginBottom: 0 }]}>Enter times in</Text>
                 {(["local", "utc"] as const).map((z) => (
-                  <Pressable key={z} onPress={() => setTz(z)} style={[s.tzChip, tz === z && s.tzChipOn]} disabled={!canEdit}>
+                  <Pressable key={z} onPress={() => setTz(z)} style={[s.tzChip, tz === z && s.tzChipOn]}>
                     <Text style={[s.tzChipT, tz === z && { color: C.bg }]}>{z === "local" ? "Local" : "UTC"}</Text>
                   </Pressable>
                 ))}
