@@ -10,6 +10,7 @@ import { store, Calendar, CalEvent } from "./store";
 import { Event, ET, Clock, eventToJson, eventFromJson, foldCalendar } from "./engine";
 import { utf8Bytes, utf8Decode } from "./utf8";
 import { authorEvent, defaultAddress, bindCalendar, identityForCalendar } from "./identities";
+import * as sstat from "./syncstatus";
 import * as sync from "./scala-sync";
 import { buildInitial, respond } from "./catchup";
 
@@ -128,16 +129,19 @@ sync.setEventHandler((calendarId, eventJson) => {
       if (e.type === ET.SYNC_REQ) {
         const msg: any = e.payload;
         if (!msg || !msg.t) { await serveLog(calendarId); return; }
+        sstat.noteCatchup(calendarId); // a reconciliation exchange is live for this calendar
         const step = respond(await store.getLog(calendarId), msg, deviceId);
         for (const ev of step.serve)
           await sync.sendEvent(calendarId, JSON.stringify(eventToJson(ev))).catch(() => {});
-        for (const r of step.replies)
+        for (const r of step.replies) {
+          if (r.t === "need" && Array.isArray(r.ids)) sstat.noteNeed(calendarId, r.ids.length); // events WE still lack
           await sync.sendEvent(calendarId, JSON.stringify(eventToJson(await mkEvent(ET.SYNC_REQ, r)))).catch(() => {});
+        }
         return;
       }
       (await ensureClock()).receive(e.hlc); // advance past the ingested cause
       const isNew = await store.appendEvent(calendarId, e); // idempotent (dedup by id)
-      if (isNew) notifyChange();
+      if (isNew) { sstat.noteRecv(calendarId); notifyChange(); } // one deficit event fulfilled
     } catch {
       /* malformed event — ignore */
     }

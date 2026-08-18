@@ -25,6 +25,20 @@ import { EventModal, EventDraft } from "./src/components/EventModal";
 import { Drawer } from "./src/components/Drawer";
 import { IdentitiesPanel, KeycardTapOverlay, KeycardPinGate } from "./src/components/KeycardProbe";
 import { listIdentities, getDefaultIdentityId, identityForCalendar } from "./src/lib/identities";
+import * as sstat from "./src/lib/syncstatus";
+
+// Per-calendar sync freshness chip (offline / syncing N / up-to-date), fed by syncstatus.ts.
+function SyncChip({ calId }: { calId: string }) {
+  const [, bump] = useState(0);
+  useEffect(() => sstat.onSyncChange(() => bump((n) => n + 1)), []);
+  const st = sstat.getCalSync(calId);
+  const [bg, fg, label] = !st.online
+    ? ["#3a2f1a", "#f9e2af", "offline"]
+    : st.syncing
+      ? ["#1e2f4a", "#89b4fa", st.behind > 0 ? `syncing ${st.behind}` : "syncing…"]
+      : ["#1e3a2a", "#a6e3a1", "up to date"];
+  return <Text style={{ fontSize: 10, fontWeight: "700", color: fg, backgroundColor: bg, borderColor: fg, borderWidth: 1, borderRadius: 6, paddingHorizontal: 5, paddingVertical: 1, overflow: "hidden", textTransform: "uppercase" }}>{label}</Text>;
+}
 import { QRModal } from "./src/components/QRModal";
 import { ScanModal } from "./src/components/ScanModal";
 import * as Clipboard from "expo-clipboard";
@@ -113,6 +127,7 @@ export default function App() {
   // placeholder that myDeviceId() returns before the clock initializes.
   const [me, setMe] = useState("");
   useEffect(() => { getDeviceId().then(setMe).catch(() => {}); }, []);
+  useEffect(() => { sstat.setOnline(/connected/i.test(status)); }, [status]); // feed the per-calendar chip
   useEffect(() => {
     let alive = true;
     const load = async () => { try { const l = await listIdentities(); if (alive) setIdentities(l); } catch { /* */ } };
@@ -481,6 +496,7 @@ export default function App() {
                       {!!aliasMap[c.id] && <Text style={s.roleBadge}>alias</Text>}
                       {c.rolesConfigured && <Text style={s.roleBadge}>{roleOf(c)}</Text>}
                       {!canAddTo(c) && <Text style={[s.roleBadge, { color: "#f9e2af", borderColor: "#f9e2af" }]}>read-only</Text>}
+                      <SyncChip calId={c.id} />
                     </View>
                     {!!c.description && <Text style={s.sub} numberOfLines={2}>{c.description}</Text>}
                   </View>
