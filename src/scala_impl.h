@@ -139,7 +139,7 @@ private:
     long long m_wall = 0;                 // HLC clock
     long long m_ctr = 0;
     scala::HLC nextHlc();
-    scala::Event mkEvent(const std::string& type, const scala::json& payload);
+    scala::Event mkEvent(const std::string& type, const scala::json& payload, const std::string& calId = "");
     void publishAndApply(const std::string& calId, const scala::Event& e);  // append locally + broadcast
     void applyIncoming(const std::string& calId, const std::string& eventJson);  // merge a received event
     // ── catch-up (qaku SYNC_REQ + seed) ──────────────────────────────────────
