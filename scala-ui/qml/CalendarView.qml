@@ -38,6 +38,27 @@ Item {
         }
         return (v === undefined || v === null) ? fallback : v
     }
+    // Identity SERVICE lives in loam_core (loam ADR 0004) — the panel talks to it directly.
+    function loamCore(method, args) {
+        if (typeof logos === "undefined" || !logos.callModule) return ""
+        try { var r = logos.callModule("loam_core", method, args || []); return (r === undefined || r === null) ? "" : r } catch (e) { return "" }
+    }
+
+    // ── identities (loam_core service; UI is ours) ─────────────────────────────
+    property var identities: []            // [{id,kind,label,address,pubHex}]
+    property string defaultIdentityId: "device"
+    function refreshIdentities() {
+        identities = root.j(loamCore("listIdentities", []), [])
+        defaultIdentityId = root.j(loamCore("getDefaultIdentityId", []), "device")
+    }
+    function identityLabel(id) {
+        for (var i = 0; i < identities.length; i++) if (identities[i].id === id) return identities[i].label
+        return id
+    }
+    function calendarIdentityId(calId) {
+        var m = root.j(loamCore("identityForContainer", [calId]), null)
+        return m && m.id ? m.id : root.defaultIdentityId
+    }
 
     // ── state ────────────────────────────────────────────────────────────────
     property var calendars: []          // [{id,name,color,encryptionKey,...}]
@@ -73,6 +94,7 @@ Item {
     // ── data ─────────────────────────────────────────────────────────────────
     function refresh() {
         if (!root.ready) return
+        refreshIdentities()
         calendars = j(core("listCalendars", []), [])
         var all = []
         for (var i = 0; i < calendars.length; i++) {
@@ -325,6 +347,7 @@ Item {
 
                 LogosButton { Layout.fillWidth: true; text: "+ New calendar"; onClicked: newCalPopup.open() }
                 LogosButton { Layout.fillWidth: true; text: "Join calendar"; onClicked: joinPopup.open() }
+                LogosButton { Layout.fillWidth: true; text: "👤 Identities"; onClicked: { root.refreshIdentities(); identitiesPopup.open() } }
             }
         }
 
@@ -1019,6 +1042,56 @@ Item {
                 Item { Layout.fillWidth: true }
                 LogosButton { text: "Cancel"; onClicked: timePicker.close() }
                 LogosButton { text: "Set"; onClicked: { if (timePicker.targetField) timePicker.targetField.text = root.pad(timePicker.selHour) + ":" + root.pad(timePicker.selMin); timePicker.close() } }
+            }
+        }
+    }
+
+    // ── identities popup (loam ADR 0004: service in loam_core, UI here) ────────
+    property string newIdentityLabel: ""
+    Popup {
+        id: identitiesPopup
+        anchors.centerIn: Overlay.overlay
+        width: 460; modal: true; padding: Theme.spacing.large
+        background: Rectangle { radius: Theme.spacing.radiusMedium; color: Theme.palette.backgroundElevated; border.width: 1; border.color: Theme.palette.borderHairline }
+        ColumnLayout {
+            width: parent.width; spacing: Theme.spacing.medium
+            LogosText { text: "Identities"; color: Theme.palette.text; font.pixelSize: 18; font.weight: Theme.typography.weightMedium }
+            LogosText { text: "Keys live in loam_core and never leave it. ★ = default for new calendars — tap an identity to make it the default."
+                color: Theme.palette.textTertiary; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            Repeater {
+                model: root.identities
+                RowLayout {
+                    Layout.fillWidth: true; spacing: Theme.spacing.small
+                    MouseArea {
+                        Layout.fillWidth: true; implicitHeight: idCol.implicitHeight; cursorShape: Qt.PointingHandCursor
+                        onClicked: { root.loamCore("setDefaultIdentityId", [modelData.id]); root.refreshIdentities() }
+                        ColumnLayout {
+                            id: idCol; width: parent.width; spacing: 0
+                            LogosText {
+                                text: (modelData.id === root.defaultIdentityId ? "★ " : "  ") + modelData.label + "  ·  " + modelData.kind
+                                color: Theme.palette.text; font.pixelSize: 13
+                            }
+                            LogosText { text: (modelData.address || "").substring(0, 14) + "…" + (modelData.address || "").slice(-4); color: Theme.palette.textTertiary; font.pixelSize: 10; font.family: "monospace" }
+                        }
+                    }
+                    LogosButton {
+                        visible: modelData.kind === "soft"; text: "✕"
+                        onClicked: { root.loamCore("removeSoftIdentity", [modelData.id]); root.refreshIdentities() }
+                    }
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true; Layout.topMargin: Theme.spacing.small; spacing: Theme.spacing.small
+                LogosTextField { id: newIdField; Layout.fillWidth: true; placeholderText: "new software identity name"; text: root.newIdentityLabel; onTextChanged: root.newIdentityLabel = text }
+                LogosButton {
+                    text: "+ Add"
+                    onClicked: { root.loamCore("addSoftIdentity", [newIdField.text.trim() || "Identity"]); newIdField.text = ""; root.refreshIdentities() }
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true; Layout.topMargin: Theme.spacing.small
+                Item { Layout.fillWidth: true }
+                LogosButton { text: "Close"; onClicked: identitiesPopup.close() }
             }
         }
     }

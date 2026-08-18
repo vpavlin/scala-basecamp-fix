@@ -46,6 +46,11 @@ QString MockLogos::callModule(const QString &mod, const QString &method, const Q
     // pending (so the "hold your Keycard" overlay renders for the screenshot).
     if (method == "requestSign") return QString(R"({"signId":"sig-1","status":"pending"})");
     if (method == "checkSignStatus") return QString(R"({"signId":"sig-1","status":"pending"})");
+    // Mock loam_core's identity service (loam ADR 0004) for the Identities panel.
+    if (method == "listIdentities")
+        return QString(R"([{"id":"device","kind":"device","label":"This device","address":"0xme00000000000000000000000000000000000000","pubHex":"02aa"},{"id":"soft-1","kind":"soft","label":"Work","address":"0xwork1111111111111111111111111111111111","pubHex":"03bb"}])");
+    if (method == "getDefaultIdentityId") return QString(R"("device")");
+    if (method == "identityForContainer") return QString(R"({"id":"device","kind":"device","label":"This device","address":"0xme00000000000000000000000000000000000000","pubHex":"02aa"})");
     if (method == "getIdentity") return "\"0xme00000000000000000000000000000000000000\"";
     if (method == "diagnostics")
         return QString(R"({"deliveryStatus":"Connected","ctxReady":true,"calendarCount":1,"eventCount":1,"identity":"0xme00000000000000000000000000000000000000","dataDir":"/tmp/scala","calendars":[]})");
@@ -97,8 +102,10 @@ int main(int argc, char **argv) {
     QTimer::singleShot(3100, [&] { runJs(&view, "newCalPopup.open()"); });
     QTimer::singleShot(3500, [&] { grab(&view, out + "/03-newcal.png"); runJs(&view, "newCalPopup.close()"); });
     QTimer::singleShot(3800, [&] { runJs(&view, "openCalSettings(calById(\"c1\"))"); });
-    QTimer::singleShot(4200, [&] { grab(&view, out + "/04-settings.png"); });
-    QTimer::singleShot(4600, [&] { app.quit(); });
+    QTimer::singleShot(4200, [&] { grab(&view, out + "/04-settings.png"); runJs(&view, "calSettingsPopup.close()"); });
+    QTimer::singleShot(4500, [&] { runJs(&view, "refreshIdentities(); identitiesPopup.open()"); });
+    QTimer::singleShot(4900, [&] { grab(&view, out + "/05-identities.png"); });
+    QTimer::singleShot(5300, [&] { app.quit(); });
     return app.exec();
 }
 #include "harness.moc"
