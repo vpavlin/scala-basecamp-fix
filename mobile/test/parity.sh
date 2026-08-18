@@ -7,15 +7,23 @@ cd "$(dirname "$0")"
 
 NLOHMANN=$(find /nix/store -maxdepth 5 -name json.hpp -path '*nlohmann*' 2>/dev/null | head -1)
 NLOHMANN_INC=$(dirname "$(dirname "$NLOHMANN")")   # .../include so #include <nlohmann/json.hpp> resolves
+# OpenSSL — the fold VERIFIES signatures (scala_identity.hpp → libcrypto), and always-require means
+# unsigned events are dropped, so the harness must both link crypto AND sign the fixtures first.
+SSL=$(find /nix/store -maxdepth 4 -name libcrypto.so -path '*openssl-3*' 2>/dev/null | head -1 | xargs -r dirname | xargs -r dirname)
+
+echo "== signing fixtures (fold now always requires a signature) =="
+# register.mjs installs a resolver hook: extensionless ./x → ./x.ts, and stubs the Expo modules
+# so the REAL mobile engine/identity load under node.
+node --experimental-strip-types --import ./register.mjs sign_fixtures.mjs
 
 echo "== compiling C++ engine harness =="
-g++ -std=c++17 -I"$NLOHMANN_INC" fold_cpp.cpp -o fold_cpp
+g++ -std=c++17 -I"$NLOHMANN_INC" ${SSL:+-I"$SSL/include" -L"$SSL/lib" -Wl,-rpath,"$SSL/lib"} -Wno-deprecated-declarations fold_cpp.cpp -o fold_cpp -lcrypto
 
 echo "== folding fixtures (C++ desktop engine) =="
 CPP_OUT=$(./fold_cpp < fixtures.json)
 
 echo "== folding fixtures (JS mobile engine) + convergence =="
-JS_OUT=$(node --experimental-strip-types parity.ts)
+JS_OUT=$(node --experimental-strip-types --import ./register.mjs parity.ts)
 
 # Deep-sort object keys on both so we compare structure, not key order.
 norm() { node --input-type=module -e '
