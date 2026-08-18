@@ -56,7 +56,22 @@ The view drives the UX between the two calls: a "hold your Keycard" overlay whil
 error on `rejected`/timeout (Alisher's poller leaves wrong-PIN/lockout at `pending` — the view needs
 its own timeout), and a retry.
 
-### 3. No fold / wire change
+### 3. Depend on the keycard module SOFTLY, not hard
+Alisher's guide says to add `"dependencies": ["keycard"]` to the manifest — correct for a module
+whose whole purpose is keycard, but **wrong for scala**, where card signing is optional. A hard
+manifest dependency would make Basecamp refuse to load `scala_ui` for every user who doesn't have
+the keycard module + a reader installed — breaking the app for almost everyone. So:
+- **Do NOT declare `keycard` in `scala_ui/metadata.json` dependencies** (keep just `["scala"]`).
+- **Feature-detect + call defensively.** `KeycardSign.qml` wraps every `logos.callModule("keycard",…)`
+  in try/catch (`_call`) so a missing module returns "unavailable" instead of throwing, and exposes
+  `available()` (a cheap `checkSignStatus` probe, no tap) to gate the UI — the "Sign with Keycard"
+  option only appears when the module is present. scala works fully without keycard; the feature
+  lights up when it's installed and a reader is connected.
+
+(If Basecamp later grows an *optional*-dependency concept, declare it optional. Until then, the
+soft-detect pattern is the safe way to depend on an optional peer module.)
+
+### 4. No fold / wire change
 A card-signed event is a normal signed event (`pub`/`sig`/`dev`) — it verifies identically to a
 software-signed one on every peer, and **signatures-required** ([ADR 0015](0015-full-form-calendar-create.md))
 accepts it and drops unsigned writes. No cert, no cert-aware verify (that was the *no-reader* fallback

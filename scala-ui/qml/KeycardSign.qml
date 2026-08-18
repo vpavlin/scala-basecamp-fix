@@ -26,13 +26,18 @@ Item {
     property int _elapsed: 0
 
     function _j(raw, fb) { try { return JSON.parse(raw) } catch (e) { return fb } }
+    // SOFT dependency: keycard is optional (ADR 0016). callModule to a module that isn't installed
+    // may throw / return null — treat any failure as "unavailable" so scala keeps working without it.
+    function _call(method, args) { try { return logos.callModule("keycard", method, args) } catch (e) { return "" } }
+    // Feature-detect: is the keycard module present + a card usable? (cheap, no tap). Gate the UI on this.
+    function available() { var r = _j(_call("checkSignStatus", ["__probe__"]), null); return r !== null }
 
     // Sign a 32-byte digest (hex) on the card. onDone(sigHex) / onFail(msg).
     function sign(digestHex, onDone, onFail) {
         _onDone = onDone; _onFail = onFail; _elapsed = 0
-        var r = _j(logos.callModule("keycard", "requestSign", [JSON.stringify({
+        var r = _j(_call("requestSign", [JSON.stringify({
             domain: "scala", payloadHash: digestHex, caller: "scala", scheme: "ecdsa" })]), {})
-        if (!r.signId) { _fail(r.error || "Keycard unavailable (is the reader connected?)"); return }
+        if (!r.signId) { _fail(r.error || "Keycard unavailable — is the module installed and a reader connected?"); return }
         _signId = r.signId; busy = true; tapOverlay.open(); poll.restart()
     }
     function cancel() { _fail("Cancelled.") }
@@ -44,7 +49,7 @@ Item {
         onTriggered: {
             kc._elapsed += kc.pollMs
             if (kc._elapsed > kc.timeoutMs) { kc._fail("Timed out waiting for the card. Try again."); return }
-            var s = kc._j(kc.logos.callModule("keycard", "checkSignStatus", [kc._signId]), {})
+            var s = kc._j(kc._call("checkSignStatus", [kc._signId]), {})
             if (s.status === "complete" && s.signature) kc._ok(s.signature)
             else if (s.status === "rejected") kc._fail("Signing was declined on the card.")
             else if (s.error) kc._fail(s.error)
