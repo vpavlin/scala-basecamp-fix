@@ -24,7 +24,7 @@ import { expandEvents } from "./src/lib/recur";
 import { EventModal, EventDraft } from "./src/components/EventModal";
 import { Drawer } from "./src/components/Drawer";
 import { IdentitiesPanel, KeycardTapOverlay, KeycardPinGate } from "./src/components/KeycardProbe";
-import { listIdentities, getDefaultIdentityId } from "./src/lib/identities";
+import { listIdentities, getDefaultIdentityId, identityForCalendar } from "./src/lib/identities";
 import { QRModal } from "./src/components/QRModal";
 import { ScanModal } from "./src/components/ScanModal";
 import * as Clipboard from "expo-clipboard";
@@ -132,10 +132,24 @@ export default function App() {
   }, [me]);
   // Two-rule permissions (mirror the fold): owner/editors do anything; viewers read-only;
   // everyone else may ADD iff Open, and edit/delete only events they authored.
-  const isEditorMe = useCallback((c?: Calendar) => !c ? true : (c.owner === me || c.roles?.[me] === "editor" || c.roles?.[me] === "admin"), [me]);
-  const isViewerMe = useCallback((c?: Calendar) => c?.roles?.[me] === "viewer", [me]);
+  // Permission checks must use the address that will ACTUALLY author events on this calendar — its
+  // BOUND identity (per-calendar), not the single global default. A Keycard-owned calendar bound to
+  // the Keycard identity is writable even when the global default is the device key. meFor maps
+  // calId → that authoring address; falls back to `me` until resolved.
+  const [meFor, setMeFor] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const entries = await Promise.all(cals.map(async (c) => [c.id, (await identityForCalendar(c.id)).address] as const));
+      if (alive) setMeFor(Object.fromEntries(entries));
+    })();
+    return () => { alive = false; };
+  }, [cals, identities]);
+  const addrFor = useCallback((c?: Calendar) => (c && meFor[c.id]) || me, [meFor, me]);
+  const isEditorMe = useCallback((c?: Calendar) => { if (!c) return true; const a = addrFor(c); return c.owner === a || c.roles?.[a] === "editor" || c.roles?.[a] === "admin"; }, [addrFor]);
+  const isViewerMe = useCallback((c?: Calendar) => { if (!c) return false; return c.roles?.[addrFor(c)] === "viewer"; }, [addrFor]);
   const canAddTo = useCallback((c?: Calendar) => isEditorMe(c) || (!isViewerMe(c) && c?.open !== false), [isEditorMe, isViewerMe]);
-  const canEditEvent = useCallback((c?: Calendar, ev?: CalEvent) => isEditorMe(c) || (!isViewerMe(c) && !!ev && ev.creatorId === me), [isEditorMe, isViewerMe, me]);
+  const canEditEvent = useCallback((c?: Calendar, ev?: CalEvent) => isEditorMe(c) || (!isViewerMe(c) && !!ev && ev.creatorId === addrFor(c)), [isEditorMe, isViewerMe, addrFor]);
   const openCalSettings = (c: Calendar) => {
     setNf({ key: "", label: "", type: "text" }); setNm({ id: "", role: "editor" });
     setCalSet({ cal: c, name: c.name, desc: c.description || "", alias: aliasMap[c.id] || "", schema: c.schema ? [...c.schema] : [] });

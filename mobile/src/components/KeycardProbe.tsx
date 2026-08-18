@@ -10,6 +10,7 @@ export function IdentitiesPanel() {
   const [def, setDef] = useState("");
   const [kc, setKc] = useState({ enrolled: false, session: false, status: "" });
   const [pin, setPin] = useState(""); const [pairing, setPairing] = useState("KeycardDefaultPairing");
+  const [adv, setAdv] = useState(false); // enroll modal: show the pairing-password field
   const [setupKc, setSetupKc] = useState(false);
   const [newLabel, setNewLabel] = useState(""); const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false); const [msg, setMsg] = useState("");
@@ -65,17 +66,7 @@ export function IdentitiesPanel() {
 
       <View style={st.kcBox}>
         <Text style={st.kcH}>🔑 Keycard — {kc.status}</Text>
-        {!kc.enrolled && !setupKc ? <Pressable style={st.btn} onPress={() => setSetupKc(true)}><Text style={st.btnT}>Set up Keycard</Text></Pressable> : null}
-        {!kc.enrolled && setupKc ? (
-          <View>
-            <TextInput style={st.in} placeholder="PIN" placeholderTextColor="#6c7086" value={pin} onChangeText={setPin} keyboardType="number-pad" secureTextEntry />
-            <TextInput style={st.in} placeholder="pairing password" placeholderTextColor="#6c7086" value={pairing} onChangeText={setPairing} autoCapitalize="none" autoCorrect={false} />
-            <View style={st.row}>
-              <Pressable style={[st.btn, busy && st.dim]} disabled={busy} onPress={enroll}><Text style={st.btnT}>Enroll (tap)</Text></Pressable>
-              <Pressable style={[st.btn, st.ghost]} disabled={busy} onPress={() => setSetupKc(false)}><Text style={st.btnT}>Cancel</Text></Pressable>
-            </View>
-          </View>
-        ) : null}
+        {!kc.enrolled ? <Pressable style={st.btn} onPress={() => { setPin(""); setAdv(false); setSetupKc(true); }}><Text style={st.btnT}>Set up Keycard</Text></Pressable> : null}
         {kc.enrolled ? (
           <View style={st.row}>
             {kc.session ? <Pressable style={[st.btn, st.ghost]} onPress={lock}><Text style={st.btnT}>Lock</Text></Pressable> : <Text style={st.hint}>edit a card-bound calendar → asks for your PIN</Text>}
@@ -84,6 +75,23 @@ export function IdentitiesPanel() {
         ) : null}
       </View>
       {msg ? <Text style={st.r} selectable>{msg}</Text> : null}
+
+      {/* Enroll modal — same polished sheet as the PIN gate: PIN prominent, pairing under Advanced. */}
+      <Modal visible={!kc.enrolled && setupKc} transparent animationType="fade" onRequestClose={() => setSetupKc(false)}>
+        <View style={st.overlay}><View style={st.card}>
+          <Text style={st.big}>🔑</Text>
+          <Text style={st.tapT}>Set up your Keycard</Text>
+          <Text style={st.cardSub}>Enter your PIN, then hold the card to the phone. This reads its key and makes it your identity.</Text>
+          <TextInput style={st.pinIn} value={pin} onChangeText={setPin} keyboardType="number-pad" secureTextEntry autoFocus placeholder="••••••" placeholderTextColor="#6c7086" onSubmitEditing={() => !busy && enroll()} />
+          {adv ? (
+            <TextInput style={[st.in, { width: 220, marginTop: 10 }]} placeholder="pairing password" placeholderTextColor="#6c7086" value={pairing} onChangeText={setPairing} autoCapitalize="none" autoCorrect={false} />
+          ) : <Pressable onPress={() => setAdv(true)} hitSlop={8}><Text style={st.advT}>Advanced · pairing password</Text></Pressable>}
+          <View style={st.row2}>
+            <Pressable style={st.cancel} onPress={() => setSetupKc(false)}><Text style={st.cancelT}>Cancel</Text></Pressable>
+            <Pressable style={[st.unlock, busy && st.dim]} disabled={busy} onPress={enroll}><Text style={st.btnT}>Enroll (tap)</Text></Pressable>
+          </View>
+        </View></View>
+      </Modal>
       </>)}
     </View>
   );
@@ -155,6 +163,8 @@ const st = StyleSheet.create({
   card: { backgroundColor: "#1e1e2e", borderRadius: 16, padding: 30, alignItems: "center", borderWidth: 1, borderColor: "#89b4fa", minWidth: 260 },
   big: { fontSize: 48 },
   tapT: { color: "#cdd6f4", fontSize: 16, marginTop: 12, textAlign: "center" },
+  cardSub: { color: "#9399b2", fontSize: 12.5, marginTop: 8, textAlign: "center", lineHeight: 17, maxWidth: 240 },
+  advT: { color: "#89b4fa", fontSize: 12.5, marginTop: 12, textDecorationLine: "underline" },
   pinIn: { backgroundColor: "#2a2a3c", color: "#cdd6f4", borderRadius: 8, paddingHorizontal: 16, paddingVertical: 12, marginTop: 16, width: 200, textAlign: "center", fontSize: 20, letterSpacing: 4 },
   cancel: { paddingVertical: 10, paddingHorizontal: 24, borderRadius: 6, backgroundColor: "#45475a", marginTop: 8 },
   cancelT: { color: "#cdd6f4", fontWeight: "600" },
