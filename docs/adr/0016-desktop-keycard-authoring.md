@@ -56,20 +56,22 @@ The view drives the UX between the two calls: a "hold your Keycard" overlay whil
 error on `rejected`/timeout (Alisher's poller leaves wrong-PIN/lockout at `pending` — the view needs
 its own timeout), and a retry.
 
-### 3. Depend on the keycard module SOFTLY, not hard
-Alisher's guide says to add `"dependencies": ["keycard"]` to the manifest — correct for a module
-whose whole purpose is keycard, but **wrong for scala**, where card signing is optional. A hard
-manifest dependency would make Basecamp refuse to load `scala_ui` for every user who doesn't have
-the keycard module + a reader installed — breaking the app for almost everyone. So:
-- **Do NOT declare `keycard` in `scala_ui/metadata.json` dependencies** (keep just `["scala"]`).
-- **Feature-detect + call defensively.** `KeycardSign.qml` wraps every `logos.callModule("keycard",…)`
-  in try/catch (`_call`) so a missing module returns "unavailable" instead of throwing, and exposes
-  `available()` (a cheap `checkSignStatus` probe, no tap) to gate the UI — the "Sign with Keycard"
-  option only appears when the module is present. scala works fully without keycard; the feature
-  lights up when it's installed and a reader is connected.
-
-(If Basecamp later grows an *optional*-dependency concept, declare it optional. Until then, the
-soft-detect pattern is the safe way to depend on an optional peer module.)
+### 3. Card use is per-calendar OPT-IN; no dependency declaration
+Alisher's guide says to add `"dependencies": ["keycard"]`, but that's wrong for scala:
+- **Basecamp's manifest `dependencies` is a hard, all-must-be-present list** — there is no
+  optional/soft-dependency concept. Declaring `keycard` would make Basecamp refuse to load `scala_ui`
+  for every user who doesn't have the keycard module + a reader — breaking the app for almost everyone.
+  So **do NOT declare it** (keep `["scala"]`).
+- **A module being installed does not mean the user wants scala to use the card.** Someone may have
+  keycard installed for another app. So detection is NOT the gate. The gate is **explicit user
+  intent**: a calendar is bound to "sign with Keycard" (the desktop analogue of mobile's per-calendar
+  keycard identity, [ADR 0009](0009-per-calendar-identity.md)). Only a keycard-bound calendar ever
+  calls the module.
+- **Graceful absence for an opted-in calendar.** `KeycardSign.qml` wraps every
+  `logos.callModule("keycard",…)` in try/catch (`_call`), so if the user turned on Keycard signing
+  but the module/reader is absent, the write fails with a clear message ("Keycard signing is on for
+  this calendar, but the keycard module isn't installed / no reader") — never a crash. Detection is
+  only for that message, never a UI gate.
 
 ### 4. No fold / wire change
 A card-signed event is a normal signed event (`pub`/`sig`/`dev`) — it verifies identically to a

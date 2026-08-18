@@ -26,11 +26,12 @@ Item {
     property int _elapsed: 0
 
     function _j(raw, fb) { try { return JSON.parse(raw) } catch (e) { return fb } }
-    // SOFT dependency: keycard is optional (ADR 0016). callModule to a module that isn't installed
-    // may throw / return null — treat any failure as "unavailable" so scala keeps working without it.
+    // Card use is per-calendar OPT-IN (ADR 0016) — this only runs for a calendar the user bound to
+    // "sign with Keycard". We do NOT declare a manifest dependency on the keycard module (Basecamp
+    // deps are a hard all-present list; there's no soft-dep concept, and installed != wants-to-use).
+    // So wrap callModule in try/catch: if the user opted in but the module/reader is absent, fail
+    // with a clear message instead of crashing. Detection is only for that message, never a UI gate.
     function _call(method, args) { try { return logos.callModule("keycard", method, args) } catch (e) { return "" } }
-    // Feature-detect: is the keycard module present + a card usable? (cheap, no tap). Gate the UI on this.
-    function available() { var r = _j(_call("checkSignStatus", ["__probe__"]), null); return r !== null }
 
     // Sign a 32-byte digest (hex) on the card. onDone(sigHex) / onFail(msg).
     function sign(digestHex, onDone, onFail) {
