@@ -152,6 +152,20 @@ export default function App() {
   const isViewerMe = useCallback((c?: Calendar) => { if (!c) return false; return c.roles?.[addrFor(c)] === "viewer"; }, [addrFor]);
   const canAddTo = useCallback((c?: Calendar) => isEditorMe(c) || (!isViewerMe(c) && c?.open !== false), [isEditorMe, isViewerMe]);
   const canEditEvent = useCallback((c?: Calendar, ev?: CalEvent) => isEditorMe(c) || (!isViewerMe(c) && !!ev && ev.creatorId === addrFor(c)), [isEditorMe, isViewerMe, addrFor]);
+  // Human "why can't I edit this" — the identity that WOULD author here (addrFor) vs owner/roles.
+  const shortA = (a?: string) => (a ? a.replace(/^scala-/, "").slice(0, 10) + "…" : "?");
+  const readonlyReason = useCallback((c?: Calendar, ev?: CalEvent): string => {
+    if (!c) return "";
+    const a = addrFor(c);
+    if (isViewerMe(c)) return `You're a viewer on "${c.name}" — read-only.`;
+    if (ev && ev.creatorId && !isEditorMe(c) && ev.creatorId !== a)
+      return `Only the author can edit this event (created by ${shortA(ev.creatorId)}). You're signing as ${shortA(a)}.`;
+    if (c.owner && a !== c.owner && !isEditorMe(c))
+      return `This calendar is owned by ${shortA(c.owner)}, but you're signing as ${shortA(a)}. If that owner was a Keycard you re-enrolled, its address changed and this calendar is orphaned — make a new one, or bind an identity that owns/edits it.`;
+    if (c.open === false && !isEditorMe(c))
+      return `"${c.name}" is closed — only its owner/editors can add events. You're signing as ${shortA(a)}.`;
+    return `You can't write to "${c.name}" as ${shortA(a)}.`;
+  }, [addrFor, isEditorMe, isViewerMe]);
   const openCalSettings = (c: Calendar) => {
     setNf({ key: "", label: "", type: "text" }); setNm({ id: "", role: "editor" });
     setCalSet({ cal: c, name: c.name, desc: c.description || "", alias: aliasMap[c.id] || "", schema: c.schema ? [...c.schema] : [] });
@@ -244,8 +258,11 @@ export default function App() {
 
   const openNew = () => {
     if (writable.length === 0) { Alert.alert("No calendar", "Create or join a calendar first."); setDrawer(true); return; }
-    // #5: default to the calendar you last tapped, not always the first one.
-    const calId = writable.find((c) => c.id === currentCalId)?.id || writable[0].id;
+    // #5: default to the calendar you last tapped; prefer one you can actually add to (skip
+    // read-only / orphaned-owner calendars) so the editor doesn't open pre-locked.
+    const addable = writable.filter((c) => canAddTo(c));
+    const pool = addable.length ? addable : writable;
+    const calId = pool.find((c) => c.id === currentCalId)?.id || pool[0].id;
     setModal({
       open: true, calId,
       draft: { title: "", startTime: atHour(selected, 9).getTime(), endTime: atHour(selected, 10).getTime() },
@@ -461,6 +478,7 @@ export default function App() {
                       {currentCalId === c.id && <Text style={[s.roleBadge, { color: C.accent, borderColor: C.accent }]}>active</Text>}
                       {!!aliasMap[c.id] && <Text style={s.roleBadge}>alias</Text>}
                       {c.rolesConfigured && <Text style={s.roleBadge}>{roleOf(c)}</Text>}
+                      {!canAddTo(c) && <Text style={[s.roleBadge, { color: "#f9e2af", borderColor: "#f9e2af" }]}>read-only</Text>}
                     </View>
                     {!!c.description && <Text style={s.sub} numberOfLines={2}>{c.description}</Text>}
                   </View>
@@ -757,6 +775,7 @@ export default function App() {
           onPickCalendar={(id) => setModal((m) => ({ ...m, calId: id }))}
           canPickCalendar={!modal.editing}
           canEdit={modal.editing ? canEditEvent(cals.find((c) => c.id === modal.calId), modal.editing) : canAddTo(cals.find((c) => c.id === modal.calId))}
+          readonlyReason={readonlyReason(cals.find((c) => c.id === modal.calId), modal.editing)}
           onSave={saveEvent}
           onDelete={modal.editing ? removeEvent : undefined}
           onClose={() => setModal((m) => ({ ...m, open: false }))}

@@ -42,7 +42,7 @@ export interface HistoryEntry { author: string; at: number; action: string; payl
 
 export function EventModal({
   visible, initial, calendars, calendarId, onPickCalendar, canPickCalendar, onSave, onDelete, onClose,
-  schema = [], loadHistory, canEdit = true,
+  schema = [], loadHistory, canEdit = true, readonlyReason,
 }: {
   visible: boolean;
   initial: EventDraft;
@@ -56,6 +56,7 @@ export function EventModal({
   schema?: FieldDef[];           // #8: the calendar's custom-field definitions (empty = none)
   loadHistory?: () => Promise<HistoryEntry[]>; // #4: async edit-history loader (when editing)
   canEdit?: boolean;             // false = viewer on a role-managed calendar → read-only
+  readonlyReason?: string;       // specific "why you can't edit" copy (owner/identity mismatch, closed, viewer)
 }) {
   const [title, setTitle] = useState(initial.title);
   const [start, setStart] = useState(new Date(initial.startTime));
@@ -321,9 +322,12 @@ export function EventModal({
             )}
 
             {!canEdit && (
-              <Text style={{ color: "#f9e2af", fontSize: 12, marginTop: 14 }}>
-                {initial.id ? "View only — you can only edit events you created (editors can edit any)." : "View only — you can't add events to this calendar."}
-              </Text>
+              <View style={{ marginTop: 14, padding: 10, borderRadius: 8, backgroundColor: "#3a2f1a", borderWidth: 1, borderColor: "#f9e2af" }}>
+                <Text style={{ color: "#f9e2af", fontSize: 12, fontWeight: "700" }}>🔒 Read-only</Text>
+                <Text style={{ color: "#f9e2af", fontSize: 12, marginTop: 3 }}>
+                  {readonlyReason || (initial.id ? "You can only edit events you created (editors can edit any)." : "You can't add events to this calendar.")}
+                </Text>
+              </View>
             )}
             {canEdit && (
               <Pressable style={[s.btn, { backgroundColor: C.accent }]} onPress={save}>
