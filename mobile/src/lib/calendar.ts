@@ -7,9 +7,9 @@ import * as Crypto from "expo-crypto";
 import * as SecureStore from "expo-secure-store";
 import { fromByteArray, toByteArray } from "base64-js";
 import { store, Calendar, CalEvent } from "./store";
-import { Event, ET, Clock, eventToJson, eventFromJson } from "./engine";
+import { Event, ET, Clock, eventToJson, eventFromJson, foldCalendar } from "./engine";
 import { utf8Bytes, utf8Decode } from "./utf8";
-import { getIdentity, signEvent } from "./identity";
+import { authorEvent, defaultAddress, bindCalendar, identityForCalendar } from "./identities";
 import * as sync from "./scala-sync";
 import { buildInitial, respond } from "./catchup";
 
@@ -18,7 +18,9 @@ import { buildInitial, respond } from "./catchup";
 // verifiable author id used for event.dev / hlc.dev / the SDS senderId. Every authored
 // event is signed with the private key and verified on merge.
 export async function getDeviceId(): Promise<string> {
-  return (await getIdentity()).address;
+  // The DEFAULT identity's address (clock/senderId). Per-event authorship is set per calendar by
+  // authorEvent (a calendar can be bound to a different identity than the default).
+  return await defaultAddress();
 }
 
 // ── clock + event construction (mirrors scala_impl.cpp nextHlc / mkEvent) ────
@@ -35,12 +37,15 @@ async function ensureClock(): Promise<Clock> {
   clock = c;
   return c;
 }
-async function mkEvent(type: string, payload: any): Promise<Event> {
+async function mkEvent(type: string, payload: any, calId?: string): Promise<Event> {
   const c = await ensureClock();
   const e: Event = { v: 1, id: Crypto.randomUUID(), type, hlc: c.send(Date.now()), dev: deviceId, payload };
-  // Authenticity: sign as our address. NEVER lose an authored event to a signing error —
-  // if it throws, author it unsigned (legacy → still admitted on open calendars).
-  try { return signEvent(await getIdentity(), e) as Event; } catch { return e; }
+  // Transient sync msgs (SYNC_REQ) are never signed (fire constantly, never folded). Content is
+  // signed with the CALENDAR'S identity — authorEvent routes to soft/device/keycard and stamps the
+  // author. A Keycard identity prompts the PIN (implicit unlock) and a cancel/failure THROWS so the
+  // caller aborts the create rather than saving a mis-authored event.
+  if (type === ET.SYNC_REQ || !calId) return e;
+  return (await authorEvent(calId, e)) as Event;
 }
 // Append locally (persist FIRST — the authored event has no other copy until it's
 // both on disk and on the wire), then broadcast the raw event JSON.
@@ -158,23 +163,47 @@ function putPayload(id: string, f: any): any {
   return p;
 }
 
+// Refuse to author (with a clear error) when the calendar's identity isn't allowed to write —
+// otherwise the fold silently drops the event and it looks like "save didn't save". Mirrors the
+// fold's canAdd / canEditExisting rules (engine.ts / scala_engine.hpp).
+async function assertAuthorable(calId: string, editEventId?: string): Promise<void> {
+  const folded: any = foldCalendar(calId, await store.getLog(calId));
+  const who = (await identityForCalendar(calId)).address;
+  const role = (folded.roles || {})[who];
+  const isEditor = who === folded.owner || role === "editor" || role === "admin";
+  let ok: boolean;
+  if (editEventId) {
+    const ev: any = (folded.events || []).find((e: any) => e && e.id === editEventId);
+    ok = isEditor || (!!ev && ev.creatorId === who); // an editor, or editing an event you authored
+  } else {
+    ok = isEditor || (folded.open && role !== "viewer"); // add: open calendar, or an editor
+  }
+  if (!ok) {
+    const short = (a: string) => (a && a.length > 10 ? a.slice(0, 8) + "…" + a.slice(-4) : a || "?");
+    throw new Error(`This calendar won't accept a write from your identity (${short(who)}). Its owner is ${short(folded.owner)} — author as an allowed identity (change the default in Identities, or ask the owner for a role).`);
+  }
+}
+
 export async function createEvent(
   calendarId: string,
   fields: Omit<CalEvent, "id" | "calendarId">,
 ): Promise<CalEvent> {
+  await assertAuthorable(calendarId);
   const id = Crypto.randomUUID();
-  await publishAndApply(calendarId, await mkEvent(ET.EVENT_PUT, putPayload(id, fields)));
+  await publishAndApply(calendarId, await mkEvent(ET.EVENT_PUT, putPayload(id, fields), calendarId));
   notifyChange();
   return { ...fields, id, calendarId } as CalEvent;
 }
 
 export async function updateEvent(ev: CalEvent): Promise<void> {
-  await publishAndApply(ev.calendarId, await mkEvent(ET.EVENT_PUT, putPayload(ev.id, ev)));
+  await assertAuthorable(ev.calendarId, ev.id);
+  await publishAndApply(ev.calendarId, await mkEvent(ET.EVENT_PUT, putPayload(ev.id, ev), ev.calendarId));
   notifyChange();
 }
 
 export async function deleteEvent(ev: CalEvent): Promise<void> {
-  await publishAndApply(ev.calendarId, await mkEvent(ET.EVENT_DEL, { id: ev.id }));
+  await assertAuthorable(ev.calendarId, ev.id);
+  await publishAndApply(ev.calendarId, await mkEvent(ET.EVENT_DEL, { id: ev.id }, ev.calendarId));
   notifyChange();
 }
 
@@ -184,17 +213,21 @@ export async function deleteEvent(ev: CalEvent): Promise<void> {
 // registers membership, starts syncing, and publishes a cal.meta event. The
 // invite (buildInvite) carries name+key so a joiner gets metadata even before the
 // first cal.meta event reaches them.
-export async function createCalendar(name: string, color = "#89b4fa", description = ""): Promise<Calendar> {
+export async function createCalendar(name: string, color = "#89b4fa", description = "", identityId?: string): Promise<Calendar> {
   const id = Crypto.randomUUID();
   const encryptionKey = Crypto.randomUUID() + Crypto.randomUUID();
   const nm = name.trim() || "My calendar";
-  await store.upsertReg({ id, key: encryptionKey, name: nm, color, isShared: true, creatorId: await getDeviceId() });
+  // Bind the calendar to the chosen identity BEFORE authoring, so the cal.meta (which makes its
+  // author the OWNER) is signed by that identity. Its address is the local creatorId too.
+  if (identityId) await bindCalendar(id, identityId);
+  const author = (await identityForCalendar(id)).address;
+  await store.upsertReg({ id, key: encryptionKey, name: nm, color, isShared: true, creatorId: author });
   await sync.joinCalendar(id, encryptionKey);
   const meta: any = { name: nm, color };
   if (description.trim()) meta.description = description.trim();
-  await publishAndApply(id, await mkEvent(ET.CAL_META, meta));
+  await publishAndApply(id, await mkEvent(ET.CAL_META, meta, id));
   notifyChange();
-  return { id, name: nm, color, isShared: true, encryptionKey, creatorId: deviceId };
+  return { id, name: nm, color, isShared: true, encryptionKey, creatorId: author };
 }
 
 // Remove a calendar from THIS device. A shared p2p calendar can't be deleted for peers —
@@ -208,7 +241,7 @@ export async function deleteCalendar(calId: string): Promise<void> {
 // travel in the event log to every device. Only the changed fields are written.
 export async function updateCalendarMeta(
   calId: string,
-  fields: { name?: string; color?: string; description?: string; schema?: any[]; open?: boolean },
+  fields: { name?: string; color?: string; description?: string; schema?: any[]; open?: boolean; signaturesRequired?: boolean },
 ): Promise<void> {
   const p: any = {};
   if (fields.name !== undefined) p.name = fields.name.trim();
@@ -216,12 +249,13 @@ export async function updateCalendarMeta(
   if (fields.description !== undefined) p.description = fields.description.trim();
   if (fields.schema !== undefined) p.schema = fields.schema;
   if (fields.open !== undefined) p.open = fields.open;
+  if (fields.signaturesRequired !== undefined) p.signaturesRequired = fields.signaturesRequired;
   if (Object.keys(p).length === 0) return;
   if (p.name !== undefined || p.color !== undefined) {
     const reg = (await store.getRegistry()).find((r) => r.id === calId);
     if (reg) await store.upsertReg({ ...reg, name: p.name ?? reg.name, color: p.color ?? reg.color });
   }
-  await publishAndApply(calId, await mkEvent(ET.CAL_META, p));
+  await publishAndApply(calId, await mkEvent(ET.CAL_META, p, calId));
   notifyChange();
 }
 
@@ -248,7 +282,7 @@ export async function getEventHistory(
 // Roles (#3): grant/revoke a member by their device id (owner/admin only — the fold
 // enforces it). role "remove" clears the grant. Writes a member.set event.
 export async function setMemberRole(calId: string, member: string, role: "editor" | "admin" | "viewer" | "remove"): Promise<void> {
-  await publishAndApply(calId, await mkEvent(ET.MEMBER_SET, { member, role }));
+  await publishAndApply(calId, await mkEvent(ET.MEMBER_SET, { member, role }, calId));
   notifyChange();
 }
 
@@ -265,9 +299,16 @@ export async function setAlias(calId: string, alias: string): Promise<void> {
   notifyChange();
 }
 
-export async function joinFromInvite(link: string): Promise<Calendar | null> {
+// Rebind an existing calendar to a different authoring identity (future events author as it).
+export async function setCalendarIdentity(calId: string, identityId: string): Promise<void> {
+  await bindCalendar(calId, identityId);
+}
+export { bindingFor as calendarIdentityId } from "./identities";
+
+export async function joinFromInvite(link: string, identityId?: string): Promise<Calendar | null> {
   const inv = parseInvite(link);
   if (!inv) return null;
+  if (identityId) await bindCalendar(inv.calendarId, identityId); // author my events here as this identity
   // Register membership; name/color arrive via cal.meta events once synced (the
   // invite name seeds the registry so the UI isn't blank in the meantime).
   await store.upsertReg({

@@ -31,6 +31,21 @@ moves sealed bytes).
   attribution — a forged author folds away. Byte-parity C++ (OpenSSL) ↔ TS (@noble). The
   signer is a seam meant for a hardware backend (Keycard). (ADR
   [0007](docs/adr/0007-event-signing-identity.md).)
+- **Keycard identity (hardware).** A Status Keycard can *be* your identity — its key signs your
+  events on-chip (NFC tap-per-sign; PIN once per session with implicit unlock when you edit). It's
+  one of several **identity backends** behind that same signer seam; the concrete signer is vendored
+  at `mobile/src/lib/loam-keycard/`, and the delegation-cert custody contract lives in
+  [logos-sync ADR 0009](https://github.com/vpavlin/logos-sync/blob/main/docs/adr/0009-keycard-delegation-custody.md).
+  (ADR [0008](docs/adr/0008-keycard-identity-custody.md).)
+- **Multiple identities, bound per calendar.** Hold several identities — the built-in device key,
+  extra named software keys, and a Keycard — and **bind each calendar to one** (like choosing which
+  account owns an event in Google Calendar, one level up: calendar→identity, event→calendar). Manage
+  them in the drawer's *Identities* panel; pick "author as …" when creating a calendar. Because
+  events are self-describing (`pub`/`sig`/`dev`), this needs **no change to the fold, the wire, or the
+  desktop core**. Writing with an identity a calendar won't accept is **refused with a clear message**,
+  never silently dropped. (ADR [0009](docs/adr/0009-per-calendar-identity.md).) *Note: there is no
+  separate `loam-identity` module — the identity contract lives in `logos-sync`; `loam-keycard` is the
+  concrete hardware signer, vendored here for now.*
 
 **→ [Design decisions (ADRs)](docs/adr/)** — the *why* behind all of the above. Retired
 migration plans live in [`docs/archive/`](docs/archive/).

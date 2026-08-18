@@ -3,14 +3,14 @@
     "name": "Scala",
     "slug": "scala",
     "scheme": "scala",
-    "version": "0.9.12",
+    "version": "0.9.27",
     "platforms": [
       "android"
     ],
     "icon": "./assets/icon.png",
     "android": {
       "package": "xyz.vpavlin.scala",
-      "versionCode": 33,
+      "versionCode": 48,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#11111b"
@@ -19,6 +19,7 @@
     "plugins": [
       "./plugins/withLogosDelivery",
       "./plugins/withReleaseSigning",
+      "./plugins/withKeycard",
       "expo-secure-store",
       "expo-camera",
       "./src/lib/loam-transport-pkg/plugins/withDeliveryClient.js",

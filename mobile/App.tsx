@@ -11,6 +11,7 @@ import {
   onChange, startSyncing, joinFromInvite, createEvent, updateEvent, deleteEvent,
   createCalendar, deleteCalendar, buildInvite, getSharedNode, setSharedNode,
   updateCalendarMeta, getAlias, setAlias, getEventHistory, getDeviceId, setMemberRole,
+  setCalendarIdentity, calendarIdentityId,
 } from "./src/lib/calendar";
 import { FieldDef } from "./src/components/EventModal";
 
@@ -22,6 +23,8 @@ import { MonthGrid } from "./src/components/MonthGrid";
 import { expandEvents } from "./src/lib/recur";
 import { EventModal, EventDraft } from "./src/components/EventModal";
 import { Drawer } from "./src/components/Drawer";
+import { IdentitiesPanel, KeycardTapOverlay, KeycardPinGate } from "./src/components/KeycardProbe";
+import { listIdentities, getDefaultIdentityId } from "./src/lib/identities";
 import { QRModal } from "./src/components/QRModal";
 import { ScanModal } from "./src/components/ScanModal";
 import * as Clipboard from "expo-clipboard";
@@ -54,6 +57,11 @@ export default function App() {
 
   const [newCalName, setNewCalName] = useState("");
   const [newCalDesc, setNewCalDesc] = useState("");
+  const [newCalIdentity, setNewCalIdentity] = useState("");   // which identity authors the new calendar
+  const [identities, setIdentities] = useState<{ id: string; kind: string; label: string; address: string }[]>([]);
+  const [newCalOpen, setNewCalOpen] = useState(false);        // full "new calendar" form modal
+  const [joinIdentity, setJoinIdentity] = useState("");       // identity to author my events on a joined calendar
+  const [calSetIdentity, setCalSetIdentity] = useState("");   // the open calendar-settings sheet's bound identity
   const [currentCalId, setCurrentCalId] = useState<string>("");     // #5: last-tapped calendar (preselected for new events)
   const [aliasMap, setAliasMap] = useState<Record<string, string>>({}); // #7: device-local name overrides
   const [calSet, setCalSet] = useState<{ cal: Calendar; name: string; desc: string; alias: string; schema: FieldDef[] } | null>(null); // #7 settings sheet
@@ -100,6 +108,19 @@ export default function App() {
   // placeholder that myDeviceId() returns before the clock initializes.
   const [me, setMe] = useState("");
   useEffect(() => { getDeviceId().then(setMe).catch(() => {}); }, []);
+  useEffect(() => {
+    let alive = true;
+    const load = async () => { try { const l = await listIdentities(); if (alive) setIdentities(l); } catch { /* */ } };
+    load(); const t = setInterval(load, 3000);
+    getDefaultIdentityId().then((d) => { if (alive) { setNewCalIdentity((cur) => cur || d); setJoinIdentity((cur) => cur || d); } }).catch(() => {});
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+  useEffect(() => {   // load the open settings-sheet's calendar→identity binding
+    if (!calSet) return;
+    let alive = true;
+    (async () => { try { const b = await calendarIdentityId(calSet.cal.id); const d = await getDefaultIdentityId(); if (alive) setCalSetIdentity(b || d); } catch { /* */ } })();
+    return () => { alive = false; };
+  }, [calSet?.cal.id]);
   const displayName = useCallback((c: Calendar) => aliasMap[c.id] || c.name, [aliasMap]);
   const roleOf = useCallback((c: Calendar): string => {
     if (!c.rolesConfigured) return "open";
@@ -205,37 +226,55 @@ export default function App() {
     });
   };
 
+  // A Keycard sign was cancelled or failed → the create was aborted (nothing saved). Cancel is
+  // silent (editor stays open). A real tap failure gets a friendly message + a Retry that re-runs
+  // the same action (so a flaky NFC tap doesn't lose the edit).
+  const onKeycardAbort = (e: any, retry?: () => void) => {
+    const raw = String((e && e.message) || e || "");
+    if (raw.includes("cancelled")) return; // user cancelled — keep the editor open
+    const friendly = /pin/i.test(raw) ? "Wrong PIN, or the card moved mid-tap."
+      : /pairing/i.test(raw) ? "Pairing failed — check the pairing password."
+      : /node-null|no link|CardIO|Error sending|transceive|timeout|Tag was lost/i.test(raw) ? "The card connection dropped — hold it steady over the NFC spot and try again."
+      : raw;
+    Alert.alert("Couldn't save", friendly + "\n\nNothing was saved.",
+      retry ? [{ text: "Discard", style: "cancel" }, { text: "Retry", onPress: retry }] : [{ text: "OK" }]);
+  };
   const saveEvent = async (d: EventDraft) => {
     const common = {
       title: d.title, startTime: d.startTime, endTime: d.endTime, description: d.description,
       location: d.location, url: d.url, allDay: d.allDay, reminderMin: d.reminderMin, recur: d.recur, fields: d.fields,
     };
-    if (modal.editing) {
-      await updateEvent({ ...modal.editing, ...common });
-    } else {
-      await createEvent(modal.calId, common);
-    }
-    setModal((m) => ({ ...m, open: false }));
+    try {
+      if (modal.editing) await updateEvent({ ...modal.editing, ...common });
+      else await createEvent(modal.calId, common);
+      setModal((m) => ({ ...m, open: false }));
+    } catch (e: any) { onKeycardAbort(e, () => saveEvent(d)); }
   };
-  const removeEvent = async () => { if (modal.editing) await deleteEvent(modal.editing); setModal((m) => ({ ...m, open: false })); };
+  const removeEvent = async () => {
+    if (!modal.editing) return;
+    try { await deleteEvent(modal.editing); setModal((m) => ({ ...m, open: false })); } catch (e: any) { onKeycardAbort(e, () => removeEvent()); }
+  };
 
   const doCreateCal = async () => {
-    const cal = await createCalendar(newCalName || "My calendar", "#89b4fa", newCalDesc);
-    setNewCalName(""); setNewCalDesc(""); setCurrentCalId(cal.id); setLastInvite(buildInvite(cal));
-    await startSyncing(undefined, setStatus);
-    setQr({ value: buildInvite(cal), title: cal.name }); // show the QR right away
+    try {
+      const cal = await createCalendar(newCalName || "My calendar", "#89b4fa", newCalDesc, newCalIdentity || undefined);
+      setNewCalOpen(false);
+      setNewCalName(""); setNewCalDesc(""); setCurrentCalId(cal.id); setLastInvite(buildInvite(cal));
+      await startSyncing(undefined, setStatus);
+      setQr({ value: buildInvite(cal), title: cal.name }); // show the QR right away
+    } catch (e: any) { onKeycardAbort(e, () => doCreateCal()); }
   };
   const showShare = (cal: Calendar) => { setLastInvite(buildInvite(cal)); setQr({ value: buildInvite(cal), title: cal.name }); };
   const copyInvite = async (link: string) => { await Clipboard.setStringAsync(link); Alert.alert("Copied", "Invite link copied to clipboard."); };
   const onScanned = async (data: string) => {
     setScanning(false);
-    const cal = await joinFromInvite(data.trim());
+    const cal = await joinFromInvite(data.trim(), joinIdentity || undefined);
     if (!cal) { Alert.alert("Not a Scala invite", "That QR isn't a scala://join link."); return; }
     await startSyncing(undefined, setStatus);
     Alert.alert("Joined", `Syncing "${cal.name}"`);
   };
   const doJoin = async () => {
-    const cal = await joinFromInvite(invite.trim());
+    const cal = await joinFromInvite(invite.trim(), joinIdentity || undefined);
     if (!cal) { Alert.alert("Bad invite", "Expected a scala://join?cal=…&key=… link"); return; }
     setInvite(""); await startSyncing(undefined, setStatus);
     Alert.alert("Joined", `Syncing "${cal.name}"`);
@@ -247,6 +286,9 @@ export default function App() {
     <SafeAreaProvider>
       <SafeAreaView style={s.root} edges={["top", "left", "right", "bottom"]}>
         <StatusBar style="light" />
+        <KeycardTapOverlay />
+        <KeycardPinGate />
+
 
         {/* header */}
         <View style={s.header}>
@@ -312,14 +354,10 @@ export default function App() {
                 <Switch value={shared} onValueChange={toggleShared} trackColor={{ true: C.primary, false: C.border }} thumbColor="#fff" />
               </View>
 
-              {/* Device identity — a device-wide property (not per-calendar). Share it so an
-                  owner can grant you a role on a calendar. */}
-              <Text style={s.pLabel}>Your identity</Text>
-              <View style={[s.fieldRow, { backgroundColor: C.surface, borderRadius: 8, borderWidth: 1, borderColor: C.border, paddingHorizontal: 10 }]}>
-                <Text style={{ color: C.text, flex: 1, fontFamily: "monospace", fontSize: 12 }} numberOfLines={1}>{me}</Text>
-                <Pressable onPress={copyIdentity} hitSlop={8}><Text style={{ color: C.primary, fontWeight: "700" }}>Copy</Text></Pressable>
-              </View>
-              <Text style={s.sub}>Share this so someone can add you to their calendar.</Text>
+              {/* Identities live here (device-wide, not per-calendar): manage software/Keycard
+                  identities, set the default, and share an address so an owner can grant a role. */}
+              <Text style={s.pLabel}>Your identities</Text>
+              <IdentitiesPanel />
 
               <Text style={s.pLabel}>Your calendars</Text>
               {cals.length === 0 && <Text style={s.sub}>None yet.</Text>}
@@ -340,18 +378,26 @@ export default function App() {
                 </Pressable>
               ))}
 
-              <Text style={s.pLabel}>Create</Text>
-              <View style={s.row}>
-                <TextInput style={[s.input, { flex: 1 }]} value={newCalName} onChangeText={setNewCalName} placeholder="Name" placeholderTextColor={C.sub} />
-                <Pressable style={s.smBtn} onPress={doCreateCal}><Text style={s.smBtnT}>Add</Text></Pressable>
-              </View>
-              <TextInput style={[s.input, { marginTop: 8 }]} value={newCalDesc} onChangeText={setNewCalDesc} placeholder="Description (optional)" placeholderTextColor={C.sub} />
+              <Pressable style={[s.smBtn, { marginTop: 4, alignItems: "center" }]} onPress={() => { setNewCalName(""); setNewCalDesc(""); setNewCalOpen(true); }}>
+                <Text style={s.smBtnT}>+ New calendar</Text>
+              </Pressable>
 
               <Text style={s.pLabel}>Join a calendar</Text>
               <View style={s.row}>
                 <TextInput style={[s.input, { flex: 1 }]} value={invite} onChangeText={setInvite} placeholder="scala://join?…" placeholderTextColor={C.sub} autoCapitalize="none" />
                 <Pressable style={s.smBtn} onPress={doJoin}><Text style={s.smBtnT}>Join</Text></Pressable>
               </View>
+              {identities.length > 1 ? (
+                <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 6 }}>
+                  <Text style={[s.sub, { marginRight: 2 }]}>author as</Text>
+                  {identities.map((m) => (
+                    <Pressable key={m.id} onPress={() => setJoinIdentity(m.id)}
+                      style={{ paddingVertical: 4, paddingHorizontal: 10, borderRadius: 12, backgroundColor: joinIdentity === m.id ? "#89b4fa" : "#45475a" }}>
+                      <Text style={{ color: joinIdentity === m.id ? "#1e1e2e" : "#cdd6f4", fontSize: 12, fontWeight: "600" }}>{m.label}{m.kind === "keycard" ? " 🔑" : ""}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              ) : null}
               <Pressable style={[s.smBtn, { marginTop: 8, alignItems: "center" }]} onPress={() => setScanning(true)}>
                 <Text style={s.smBtnT}>Scan QR code</Text>
               </Pressable>
@@ -386,6 +432,18 @@ export default function App() {
                 <TextInput style={[s.input, { height: 64 }]} value={calSet?.desc || ""} onChangeText={(t) => setCalSet((v) => v && { ...v, desc: t })} placeholder="What this calendar is for" placeholderTextColor={C.sub} multiline />
                 <Text style={s.pLabel}>Local alias (only on this phone)</Text>
                 <TextInput style={s.input} value={calSet?.alias || ""} onChangeText={(t) => setCalSet((v) => v && { ...v, alias: t })} placeholder={calSet?.cal.name} placeholderTextColor={C.sub} />
+
+                {/* Which identity signs MY events on this calendar (rebind). Owner is fixed. */}
+                <Text style={s.pLabel}>Authored by</Text>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                  {identities.map((m) => (
+                    <Pressable key={m.id} onPress={async () => { if (calSet) { await setCalendarIdentity(calSet.cal.id, m.id); setCalSetIdentity(m.id); } }}
+                      style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 12, backgroundColor: calSetIdentity === m.id ? C.primary : C.surface, borderWidth: 1, borderColor: calSetIdentity === m.id ? C.primary : C.border }}>
+                      <Text style={{ color: calSetIdentity === m.id ? "#1e1e2e" : C.text, fontWeight: "600", fontSize: 13 }}>{m.label}{m.kind === "keycard" ? " 🔑" : ""}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <Text style={[s.sub, { marginTop: 4 }]}>Signs your new events here. The owner is fixed — a non-owner needs a role to write.</Text>
 
                 {/* #8: custom fields — define the calendar's schema (empty = a plain calendar). */}
                 <Text style={s.pLabel}>Custom fields</Text>
@@ -428,6 +486,19 @@ export default function App() {
                     />
                   </View>
                 )}
+                {canManage && (
+                  <View style={s.rowBetween}>
+                    <View style={{ flex: 1, paddingRight: 10 }}>
+                      <Text style={{ color: C.text }}>🔒 Signatures required</Text>
+                      <Text style={s.sub}>On = the fold DROPS any unsigned event — only signed writes count. Pair with a Keycard-owned calendar for "only my card can write here". Enforced on mobile + desktop.</Text>
+                    </View>
+                    <Switch
+                      value={!!calSet?.cal.signaturesRequired}
+                      onValueChange={async (v) => { if (calSet) { await updateCalendarMeta(calSet.cal.id, { signaturesRequired: v }); setCalSet((s2) => s2 && { ...s2, cal: { ...s2.cal, signaturesRequired: v } }); } }}
+                      trackColor={{ true: C.accent, false: C.border }} thumbColor="#fff"
+                    />
+                  </View>
+                )}
                 <Text style={[s.sub, { marginBottom: 6, marginTop: 8 }]}>
                   {calSet ? `Your role: ${roleOf(calSet.cal)}${roleOf(calSet.cal) === "viewer" ? " — read-only." : "."}` : ""}
                 </Text>
@@ -462,6 +533,29 @@ export default function App() {
           </KeyboardAvoidingView>
         </Modal>
 
+        <Modal visible={newCalOpen} transparent animationType="slide" onRequestClose={() => setNewCalOpen(false)}>
+          <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "flex-end" }}>
+            <View style={{ backgroundColor: C.bg, borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 20, paddingBottom: 36 }}>
+              <Text style={{ color: C.text, fontSize: 18, fontWeight: "700", marginBottom: 14 }}>New calendar</Text>
+              <TextInput style={s.input} value={newCalName} onChangeText={setNewCalName} placeholder="Name" placeholderTextColor={C.sub} autoFocus />
+              <TextInput style={[s.input, { marginTop: 10 }]} value={newCalDesc} onChangeText={setNewCalDesc} placeholder="Description (optional)" placeholderTextColor={C.sub} />
+              <Text style={[s.pLabel, { marginTop: 14 }]}>Author as</Text>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
+                {identities.map((m) => (
+                  <Pressable key={m.id} onPress={() => setNewCalIdentity(m.id)}
+                    style={{ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 14, backgroundColor: newCalIdentity === m.id ? C.primary : C.surface, borderWidth: 1, borderColor: newCalIdentity === m.id ? C.primary : C.border }}>
+                    <Text style={{ color: newCalIdentity === m.id ? "#1e1e2e" : C.text, fontWeight: "600" }}>{m.label}{m.kind === "keycard" ? " 🔑" : ""}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Text style={[s.sub, { marginTop: 8 }]}>This identity owns the calendar and signs its events. A Keycard calendar asks for your PIN + a tap.</Text>
+              <View style={{ flexDirection: "row", gap: 12, marginTop: 20, justifyContent: "flex-end" }}>
+                <Pressable style={[s.smBtn, { backgroundColor: C.surface }]} onPress={() => setNewCalOpen(false)}><Text style={s.smBtnT}>Cancel</Text></Pressable>
+                <Pressable style={s.smBtn} onPress={doCreateCal}><Text style={s.smBtnT}>Create</Text></Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
         <QRModal visible={!!qr} value={qr?.value || ""} title={qr?.title || "Invite"} onClose={() => setQr(null)} />
         <ScanModal visible={scanning} onScanned={onScanned} onClose={() => setScanning(false)} />
 
