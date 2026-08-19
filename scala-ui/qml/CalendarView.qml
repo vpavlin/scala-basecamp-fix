@@ -29,6 +29,21 @@ Item {
         var r = logos.callModule("scala", method, args || [])
         return (r === undefined || r === null) ? "" : (typeof r === "string" ? r : r)
     }
+    // Core/view version guard: core + view are SEPARATE Basecamp packages, so a stale core can run
+    // under a fresh view — silently signing with the wrong key while the view shows loam identities.
+    // Detect it (old cores lack coreVersion() → "" → stale) and warn loudly instead of failing quietly.
+    property bool coreOutOfDate: false
+    property string coreVer: ""
+    readonly property string minCore: "0.9.0"   // first core with loam-identity signing
+    function verLt(a, b) {
+        var pa = String(a).split("."), pb = String(b).split(".")
+        for (var i = 0; i < 3; i++) { var x = parseInt(pa[i] || "0"), y = parseInt(pb[i] || "0"); if (x !== y) return x < y }
+        return false
+    }
+    function checkCoreVersion() {
+        root.coreVer = String(root.core("coreVersion", [])).replace(/^"|"$/g, "")
+        root.coreOutOfDate = (root.coreVer === "" || root.verLt(root.coreVer, root.minCore))
+    }
     function j(raw, fallback) {
         var v = raw
         for (var i = 0; i < 3 && typeof v === "string"; i++) {
@@ -94,7 +109,7 @@ Item {
 
     Component.onCompleted: Qt.callLater(function () {
         root.ready = (typeof logos !== "undefined" && !!logos.callModule)
-        if (root.ready) { root.myIdentity = String(root.j(root.core("getIdentity", []), "")); refresh() }
+        if (root.ready) { root.checkCoreVersion(); root.myIdentity = String(root.j(root.core("getIdentity", []), "")); refresh() }
     })
 
     // Poll like kym's view does: listCalendars() self-drives the delivery bootstrap
@@ -256,6 +271,31 @@ Item {
 
     // ── layout ───────────────────────────────────────────────────────────────
     Rectangle { anchors.fill: parent; color: Theme.palette.background }
+
+    // Stale-core warning: core + view are separate Basecamp packages, so a fresh view can run over an
+    // old core that signs with the wrong identity. Warn loudly at the top rather than fail silently.
+    Rectangle {
+        id: staleCoreBanner
+        visible: root.coreOutOfDate
+        anchors { top: parent.top; left: parent.left; right: parent.right }
+        height: visible ? bannerCol.implicitHeight + 18 : 0
+        z: 9999
+        color: "#f38ba8"
+        ColumnLayout {
+            id: bannerCol
+            anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: 16; rightMargin: 16 }
+            spacing: 1
+            LogosText {
+                text: "⚠  Scala core is out of date" + (root.coreVer ? " (v" + root.coreVer + ")" : "")
+                color: "#11111b"; font.pixelSize: 14; font.weight: Theme.typography.weightMedium
+            }
+            LogosText {
+                Layout.fillWidth: true; wrapMode: Text.WordWrap
+                text: "Update the ‘scala’ package to " + root.minCore + "+ in Basecamp — until then, events may be signed with the wrong identity."
+                color: "#11111b"; font.pixelSize: 12
+            }
+        }
+    }
 
     // ── "starting soon" banner (in-app substitute for desktop notifications) ──
     property var soonOcc: null          // the imminent occurrence, or null

@@ -5,7 +5,7 @@
 set -euo pipefail
 QB=/nix/store/dkfr32yi7p8cdxsnll05q1kax19fl7ay-qtbase-6.9.2
 QDECL=/nix/store/agvpq5n8vcqwnkmn8bp8rlczy3fdxm6n-qtdeclarative-6.9.2
-DS=/nix/store/n5sy51r79209918mn1svyaliqbdxkm76-logos-design-system-1.0.0/lib
+DS=/nix/store/w9ra12n0yabd275v33m8x7lqnnrcgb9f-logos-design-system-1.0.0/lib
 HERE="$(cd "$(dirname "$0")" && pwd)"; cd "$HERE"
 # moc's parser chokes on raw-string literals in an inline class body — keep callModule
 # defined out of line, and generate <name>.moc for the #include at the bottom.

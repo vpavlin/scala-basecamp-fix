@@ -28,6 +28,11 @@ public:
     // ── Namespace API ────────────────────────────────────────────────────────
     void setNamespace(const std::string& ns);
 
+    // Core build version — the view checks this against the version it expects and warns on a
+    // stale core (core + view are separate Basecamp packages; a stale core silently signs with the
+    // wrong key while a fresh view shows the loam identities). Bump alongside metadata.json.
+    std::string coreVersion() const;
+
     // ── Identity API ─────────────────────────────────────────────────────────
     std::string getIdentity() const;
     void setIdentity(const std::string& pubkeyHex);

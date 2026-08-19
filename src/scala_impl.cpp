@@ -385,6 +385,9 @@ void ScalaImpl::onContextReady() {
 void ScalaImpl::ensureDelivery() { if (m_sync) m_sync->bootstrap(); }
 
 // ── identity ─────────────────────────────────────────────────────────────────
+// Keep in sync with metadata.json "version". The view compares this to the minimum it needs and
+// shows an "update the scala core" banner if the core is older (or lacks this method entirely).
+std::string ScalaImpl::coreVersion() const { return "0.9.1"; }
 std::string ScalaImpl::getIdentity() const { return m_identity; }
 void ScalaImpl::setIdentity(const std::string& pubkeyHex) {
     if (m_identity != pubkeyHex) { m_identity = pubkeyHex; m_store->kvSet("identity", m_identity); identityChanged(); }
