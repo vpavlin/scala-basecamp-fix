@@ -4,7 +4,8 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical">
-  <View
+  <!-- RemoteViews does NOT allow a bare <View>; a zero-text TextView is the supported way to draw a divider line. -->
+  <TextView
       android:layout_width="match_parent"
       android:layout_height="1dp"
       android:layout_marginTop="6dp"
