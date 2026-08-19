@@ -42,6 +42,7 @@ function SyncChip({ calId }: { calId: string }) {
 import { QRModal } from "./src/components/QRModal";
 import { ScanModal } from "./src/components/ScanModal";
 import * as Clipboard from "expo-clipboard";
+import { updateWidgetAgenda } from "./src/lib/widget";
 
 const C = {
   bg: "#1e1e2e", surface: "#2a2a3c", text: "#cdd6f4", sub: "#9399b2",
@@ -273,6 +274,28 @@ export default function App() {
     }
     return groups;
   }, [events, query]);
+
+  // Feed the home-screen agenda widget: the next ~12 upcoming occurrences (independent of the
+  // in-app search), refreshed whenever events/calendars change. Local-only, so it updates offline.
+  const widgetItems = useMemo(() => {
+    const now = Date.now();
+    return expandEvents(events, now, now + 90 * 864e5)
+      .filter((o) => o.endTime >= now)
+      .sort((a, b) => a.startTime - b.startTime)
+      .slice(0, 12)
+      .map((o) => {
+        const cal = cals.find((c) => c.id === o.calendarId);
+        const d = new Date(o.startTime);
+        return {
+          title: o.title || "(untitled)",
+          timeLabel: o.allDay ? "All day" : d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }),
+          dateLabel: d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }),
+          calendar: cal ? displayName(cal) : "",
+          color: colorFor(o.calendarId),
+        };
+      });
+  }, [events, cals, displayName, colorFor]);
+  useEffect(() => { updateWidgetAgenda(widgetItems); }, [widgetItems]);
 
   const openNew = () => {
     if (writable.length === 0) { Alert.alert("No calendar", "Create or join a calendar first."); setDrawer(true); return; }
