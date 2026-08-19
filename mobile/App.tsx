@@ -318,9 +318,14 @@ export default function App() {
 
   const openNew = () => {
     if (writable.length === 0) { Alert.alert("No calendar", "Create or join a calendar first."); setDrawer(true); return; }
-    // #5: default to the calendar you last tapped; prefer one you can actually add to (skip
-    // read-only / orphaned-owner calendars) so the editor doesn't open pre-locked.
-    const calId = pickCals.find((c) => c.id === currentCalId)?.id || pickCals[0].id;
+    // Read-only on every calendar → don't open a locked editor; say why (the fold would drop the
+    // write anyway — a closed calendar only takes writes from its owner/editors).
+    if (addableCals.length === 0) {
+      Alert.alert("Read-only", "You can only view your calendars. Ask the owner for an editor role, or create your own calendar.");
+      return;
+    }
+    // #5: default to the calendar you last tapped, among the ones you can actually add to.
+    const calId = addableCals.find((c) => c.id === currentCalId)?.id || addableCals[0].id;
     setModal({
       open: true, calId,
       draft: { title: "", startTime: atHour(selected, 9).getTime(), endTime: atHour(selected, 10).getTime() },
