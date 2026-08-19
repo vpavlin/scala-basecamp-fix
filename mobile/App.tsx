@@ -298,14 +298,16 @@ export default function App() {
     const rows: any[] = [];
     let lastDay = -1;
     for (const o of picked) {
-      const day = startOfDay(o.startTime);
-      if (day !== lastDay) { rows.push({ type: "header", label: dayLabel(o.startTime) }); lastDay = day; }
+      const ongoing = o.startTime < now && o.endTime > now;   // happening right now
+      const groupT = ongoing ? now : o.startTime;             // show current events under Today
+      const day = startOfDay(groupT);
+      if (day !== lastDay) { rows.push({ type: "header", label: dayLabel(groupT) }); lastDay = day; }
       const cal = cals.find((c) => c.id === o.calendarId);
       const d = new Date(o.startTime);
       rows.push({
         type: "event",
         title: o.title || "(untitled)",
-        timeLabel: o.allDay ? "All day" : d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }),
+        timeLabel: o.allDay ? "All day" : ongoing ? "Now" : d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }),
         calendar: cal ? displayName(cal) : "",
         color: colorFor(o.calendarId),
       });
