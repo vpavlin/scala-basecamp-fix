@@ -1,7 +1,15 @@
 # 15. Full-form calendar create — one signed cal.meta, all fields at creation
 
-- **Status:** accepted (mobile); proposed (Basecamp view)
+- **Status:** accepted + shipped (both clients) — **minus the signatures-required toggle** (see note)
 - **Date:** 2026-08-18
+
+> **Correction (2026-08-18).** The full-form create (name / description / custom-field schema / Open
+> in one signed `cal.meta`) shipped on both clients. But the **`signaturesRequired` toggle** this ADR
+> threads through the create form and settings was **dropped**: signatures are now **always** required
+> ([ADR 0007](0007-event-signing-identity.md) — unsigned events fold away unconditionally), so there is
+> no `signaturesRequired` field anywhere. `createCalendar` is `(name, color, identityId)`; the create
+> form carries only the **Open** switch, and a new calendar defaults **Closed**. Read the rest of this
+> ADR with the signatures-required parts struck out.
 
 ## Context
 

@@ -1,5 +1,8 @@
 # Keycard `choppu`-stack smoke test (Phase 2 gate)
 
+> **✅ Gate cleared (historical).** This was the go/no-go before writing any Keycard code. The choppu
+> stack works and mobile Keycard shipped, so the gate is passed — this doc is kept as a record.
+
 The **one unknown** blocking `loam-keycard`: the official `react-native-status-keycard` is
 archived (Apr 2026), so we'd build on the community **`choppu`** stack
 (`react-native-keycard` 1.0.4 + `keycard-sdk` 3.1.x/4.0). Prove it end-to-end on real hardware

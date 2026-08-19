@@ -1,5 +1,12 @@
 # Keycard / delegation custody — implementation plan
 
+> **⚠️ Historical / largely superseded (2026-08-18).** The delegation-cert spine this plan is built
+> around did **not** ship. What actually landed: **mobile** Keycard = NFC tap-per-sign (the choppu
+> stack, `mobile/src/lib/loam-keycard/`); **desktop** Keycard = `loam_core` delegating to Alisher's
+> `keycard` module ([ADR 0016](adr/0016-desktop-keycard-authoring.md)); identity custody moved to Loam
+> ([loam ADR 0004](https://github.com/vpavlin/loam/blob/master/docs/adr/0004-identity-as-a-loam-service.md)).
+> Kept for history; see ADR 0016 for the current design.
+
 Realizes scala ADR [0008](adr/0008-keycard-identity-custody.md), which adopts the shared contract
 in [logos-sync ADR 0009](https://github.com/vpavlin/logos-sync/blob/main/docs/adr/0009-keycard-delegation-custody.md).
 **The SDK lives in Loam, not scala:** the wire+verify spine is in `logos-sync`, the concrete NFC

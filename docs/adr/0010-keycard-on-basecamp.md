@@ -1,7 +1,14 @@
 # 10. Keycard on Basecamp — consume Alisher's native `keycard` module
 
-- **Status:** proposed (integration sketch; not yet built — needs a PC/SC reader + the keycard LGX)
+- **Status:** **SUPERSEDED by [ADR 0016](0016-desktop-keycard-authoring.md)**
 - **Date:** 2026-08-18
+
+> **Superseded (2026-08-18).** This ADR put the keycard integration in **scala's own core** and, because
+> `logos.callModule` is a QML API, had the card signature fetched in **scala's view** and handed back to
+> the core. ADR 0016 **retracted** that: keycard now lives in **`loam_core`**, which declares `keycard`
+> as a typed dependency and calls `requestSignAsync` directly (the "a core can't reach the keycard
+> module" reasoning was simply wrong). scala stays keycard-agnostic. Read 0016, not this, for the real
+> design. Kept for history.
 
 ## Context
 

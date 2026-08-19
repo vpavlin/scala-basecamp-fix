@@ -87,7 +87,7 @@ sentinel; callers must use `keycardSign` instead.
 ## No fold / wire change
 A card-signed event is a normal signed event (`pub`/`sig`/`dev`) — it verifies identically to a
 software-signed one on every peer, and always-require-signatures
-([ADR 0015](0015-full-form-calendar-create.md)) accepts it and drops unsigned writes.
+([ADR 0007](0007-event-signing-identity.md)) accepts it and drops unsigned writes.
 
 ## What is DONE vs. what remains
 

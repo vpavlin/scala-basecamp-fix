@@ -1,7 +1,16 @@
 # 8. Adopt Keycard delegation custody (from logos-sync)
 
-- **Status:** accepted
+- **Status:** accepted — but the **delegation-cert custody model below never shipped** (see note)
 - **Date:** 2026-08-17
+
+> **Correction (2026-08-18).** The delegation-cert scheme this ADR adopts (a custody slider
+> `tap-per-sign` / `delegated` / `exported`, a `DelegationCert` with `scope`+`maxSigs` enforced in the
+> fold, "desktop needs no reader — the phone issues a delegate cert over sync") was **not built**. No
+> such symbols exist in the code. What shipped instead: **mobile** signs tap-per-sign on the card
+> directly; **desktop** signs through `loam_core` → Alisher's `keycard` module over a PC/SC reader
+> (`requestSign`, [ADR 0016](0016-desktop-keycard-authoring.md)). Identity custody itself moved to
+> Loam ([loam ADR 0004](https://github.com/vpavlin/loam/blob/master/docs/adr/0004-identity-as-a-loam-service.md)).
+> This ADR is kept as historical context for the custody options that were considered.
 
 ## Context
 

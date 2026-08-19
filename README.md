@@ -21,31 +21,35 @@ moves sealed bytes).
   id-exact delta, not the whole log. (ADR [0003](docs/adr/0003-catch-up-recursive-rbsr.md).)
 - **Roles & permissions — two rules.** Owner + **editors** may do anything and explicit
   **viewers** are read-only; everyone else may *add* events when the calendar is **Open**
-  (a per-calendar toggle, default on) and may *edit/delete only the events they authored*.
+  (a per-calendar toggle — a new calendar defaults **Closed**; opening it up is a deliberate
+  choice) and may *edit/delete only the events they authored*.
   Enforced deterministically in the fold (not just the UI), so it converges. **Custom
   fields** are an optional per-calendar schema — a plain calendar looks exactly like a plain
   calendar, and a builder can grow something rich on the same log. (ADRs
   [0004](docs/adr/0004-roles-opt-in.md), [0005](docs/adr/0005-optional-field-schema.md).)
-- **Signed events.** Each device holds a secp256k1 keypair (identity = its `0x` address);
-  every event is signed and verified on merge, so roles are real authorization, not just
-  attribution — a forged author folds away. Byte-parity C++ (OpenSSL) ↔ TS (@noble). The
-  signer is a seam meant for a hardware backend (Keycard). (ADR
+- **Signed events — always.** Every event is signed and verified on merge; an unsigned or
+  forged-author event **folds away** — verification is unconditional (signatures are *not* an optional
+  toggle), so roles are real authorization, not just attribution. Identity = a `0x` address derived
+  from a secp256k1 pubkey; byte-parity C++ (OpenSSL) ↔ TS (@noble). (ADR
   [0007](docs/adr/0007-event-signing-identity.md).)
-- **Keycard identity (hardware).** A Status Keycard can *be* your identity — its key signs your
-  events on-chip (NFC tap-per-sign; PIN once per session with implicit unlock when you edit). It's
-  one of several **identity backends** behind that same signer seam; the concrete signer is vendored
-  at `mobile/src/lib/loam-keycard/`, and the delegation-cert custody contract lives in
-  [logos-sync ADR 0009](https://github.com/vpavlin/logos-sync/blob/main/docs/adr/0009-keycard-delegation-custody.md).
-  (ADR [0008](docs/adr/0008-keycard-identity-custody.md).)
-- **Multiple identities, bound per calendar.** Hold several identities — the built-in device key,
-  extra named software keys, and a Keycard — and **bind each calendar to one** (like choosing which
-  account owns an event in Google Calendar, one level up: calendar→identity, event→calendar). Manage
-  them in the drawer's *Identities* panel; pick "author as …" when creating a calendar. Because
-  events are self-describing (`pub`/`sig`/`dev`), this needs **no change to the fold, the wire, or the
-  desktop core**. Writing with an identity a calendar won't accept is **refused with a clear message**,
-  never silently dropped. (ADR [0009](docs/adr/0009-per-calendar-identity.md).) *Note: there is no
-  separate `loam-identity` module — the identity contract lives in `logos-sync`; `loam-keycard` is the
-  concrete hardware signer, vendored here for now.*
+- **Identity is a Loam service.** Keys live in **`loam_core`** (desktop) / loam-transport (mobile) —
+  never in scala. The app asks Loam to sign (`signDigest` / `keycardSign`) and stamps the returned
+  `pub`/`sig`; it never holds a private key. Loam knows three kinds: the built-in **device** key,
+  extra named **software** keys, and a **Keycard**. (loam [ADR
+  0004](https://github.com/vpavlin/loam/blob/master/docs/adr/0004-identity-as-a-loam-service.md).)
+- **Keycard (hardware) — phone *and* desktop, one card.** A Status Keycard *is* your identity — its
+  key signs on-chip and never leaves. On mobile it's NFC tap-per-sign (the choppu stack, vendored at
+  `mobile/src/lib/loam-keycard/`); on the desktop `loam_core` delegates to Alisher's `keycard`
+  Basecamp module (`requestSign` over a PC/SC reader), with a "hold your Keycard" overlay in the view.
+  Both sign at the **same** derivation path `m/43'/60'/1582'`, so **one physical card is one identity
+  across phone + desktop**. (ADRs [0008](docs/adr/0008-keycard-identity-custody.md); desktop
+  [0016](docs/adr/0016-desktop-keycard-authoring.md).)
+- **Multiple identities, bound per calendar.** Bind each calendar to one identity (calendar→identity,
+  event→calendar — like choosing which account owns an event in Google Calendar, one level up). Manage
+  them in the drawer's *Identities* panel; pick "author as …" when creating or joining. Because events
+  are self-describing (`pub`/`sig`/`dev`), this needs **no change to the fold or the wire**. Writing
+  with an identity a calendar won't accept is **refused with a clear message**, never silently dropped.
+  (ADR [0009](docs/adr/0009-per-calendar-identity.md).)
 
 **→ [Design decisions (ADRs)](docs/adr/)** — the *why* behind all of the above. Retired
 migration plans live in [`docs/archive/`](docs/archive/).
@@ -54,7 +58,7 @@ migration plans live in [`docs/archive/`](docs/archive/).
 
 | Module | Type | Description |
 |--------|------|-------------|
-| `scala` | `core` (universal) | Core business logic — the event-log fold, calendar/event CRUD, sync, signing, sharing. Depends on `delivery_module` for transport. |
+| `scala` | `core` (universal) | Core business logic — the event-log fold, calendar/event CRUD, sync, signing, sharing. Depends on **`loam_core`** — the Loam facade that owns transport (Waku + BLE bearers) **and** identity/signing (loam ADR 0004), so scala neither talks to `delivery_module` directly nor holds private keys. |
 | `scala-ui` | `ui_qml` (universal) | **Pure-QML** frontend — the view calls the core directly with `logos.callModule("scala", …)`. There is **no** C++ backend/`.rep` replica; that redundant layer blocked the Basecamp load and was removed. Depends on `scala`. |
 
 Both modules use the [logos-module-builder](https://github.com/logos-co/logos-module-builder)
@@ -110,7 +114,7 @@ modules are in the repo it's configured against.
 
 ```
 scala/
-├── metadata.json              # Core module metadata (name, version, type:core, deps:[delivery_module])
+├── metadata.json              # Core module metadata (name, version, type:core, deps:[loam_core])
 ├── flake.nix                  # Nix build (mkLogosModule; targets: lgx / lgx-portable / lib / install)
 ├── CMakeLists.txt             # logos_module(...) — lists the compiled sources
 ├── src/
@@ -118,7 +122,7 @@ scala/
 │   ├── scala_engine.hpp       # THE fold (foldCalendar) — event-log CRDT, roles, permissions (header-only)
 │   ├── scala_identity.hpp     # secp256k1 signing / verify — identity = 0x address (header-only, ADR 0007)
 │   ├── logos_sync/            # Vendored logos-sync spine (envelope, HLC, merge, RBSR catch-up)
-│   ├── logos_transport.hpp    # Transport shim over delivery_module (SDS reliable channels)
+│   ├── logos_transport.hpp    # Transport shim over loam_core (which fronts delivery_module SDS + BLE)
 │   ├── calendar_store.cpp     # Per-calendar event-log persistence
 │   ├── calendar_sync.h/.cpp   # SYNC_REQ / RBSR reconcile wiring
 │   ├── local_storage.h/.cpp   # KV persistence backend
@@ -150,12 +154,22 @@ both converge.
 - ✅ Event-log CRDT + byte-parity fold across C++ and TypeScript
 - ✅ Sync on [logos-sync](https://github.com/vpavlin/logos-sync) recursive-RBSR catch-up
 - ✅ Sharing via `scala://join` invite links (AES-256-GCM, key in the link)
-- ✅ secp256k1-signed events — roles are enforced authorization, not attribution (ADR 0007)
-- ✅ Two-rule permissions (owner/editor/viewer + Open toggle + edit-your-own), date/time
-  pickers, calendar description, optional custom-field schema, edit history
+- ✅ **Always-signed events** — verification is unconditional; unsigned writes fold away (ADR 0007)
+- ✅ **Identity is a Loam service** — device / named-software / Keycard kinds, bound per calendar,
+  "author as …" on create/join; keys never leave Loam (loam ADR 0004, scala ADR 0009)
+- ✅ **Keycard on mobile** — NFC tap-per-sign, key never leaves the card (ADR 0008)
+- ✅ Two-rule permissions (owner/editor/viewer + Open toggle + edit-your-own), with a
+  read-only **"why"** explanation (ADR 0013); calendars **default Closed**
+- ✅ **Agenda view + search** across calendars (ADR 0011); month grid; date/time pickers with
+  **Local vs UTC** time entry (ADR 0012)
+- ✅ **Per-calendar sync-status chips** (ADR 0014); calendar description; optional custom-field
+  schema; **full-form calendar create** (name/desc/schema/open in one step, ADR 0015); edit history
+- 🟡 **Keycard on desktop** — `loam_core` delegates on-card signing to the `keycard` module
+  (compile- + render-verified; **on-card verification pending a reader**) (ADR 0016)
 
-**Next:** consume logos-sync as a submodule (currently vendored); richer field rendering;
-Basecamp system notifications; the `logos-*` → `loam-*` rename.
+**Next:** on-card desktop-Keycard verification (enrolled address == the phone's card); consume
+logos-sync as a submodule (currently vendored); richer field rendering; Basecamp system
+notifications; a desktop search box + UTC toggle; finish the `logos-*` → `loam-*` rename.
 
 ## Legacy (v0.1)
 
