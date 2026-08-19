@@ -363,6 +363,12 @@ export async function startSyncing(shared?: boolean, onStatus?: (s: string) => v
   askAll();
   setTimeout(askAll, 9000);
   setTimeout(askAll, 24000);
+  // Reliable history: pull every joined calendar's log straight from the fleet store. SYNC_REQ
+  // only re-serves from a LIVE peer (which a phone often can't reach — "joined but no history"),
+  // whereas the store always has it. Retried once the mesh + store peers are reachable.
+  const pull = () => { sync.storeSync().catch(() => {}); };
+  setTimeout(pull, 2000);
+  setTimeout(pull, 12000);
 }
 
 // ── tiny change bus so the UI can refresh after inbound/outbound edits ───────

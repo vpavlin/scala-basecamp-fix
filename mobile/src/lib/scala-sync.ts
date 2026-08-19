@@ -109,6 +109,14 @@ export async function startSync(opts: {
   });
 }
 
+/** Reliable cold-start history pull: query the fleet store for every joined calendar's topic and
+ *  open+fold each stored message (reuses adapterReceive). This is how a freshly-joined calendar
+ *  gets events that predate its subscription — SYNC_REQ only re-serves from a LIVE peer, which a
+ *  phone frequently can't reach (the "joined but no history" bug). Returns {msgs, events, detail}. */
+export async function storeSync(): Promise<{ msgs: number; events: number; detail: string }> {
+  return transport.storeSync(adapterReceive);
+}
+
 /** Add a calendar's route to the live node (after creating/joining one). */
 export async function joinCalendar(calendarId: string, encryptionKey: string): Promise<void> {
   if (!routes.find((r) => r.calendarId === calendarId)) {
