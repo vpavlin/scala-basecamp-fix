@@ -275,25 +275,42 @@ export default function App() {
     return groups;
   }, [events, query]);
 
-  // Feed the home-screen agenda widget: the next ~12 upcoming occurrences (independent of the
-  // in-app search), refreshed whenever events/calendars change. Local-only, so it updates offline.
+  // Feed the home-screen agenda widget: the next 24h of events, grouped by day with Today/Tomorrow
+  // dividers. If the next 24h is quiet, fall back to the next few upcoming so it's never empty.
+  // Local-only, refreshed whenever events/calendars change — updates offline.
   const widgetItems = useMemo(() => {
     const now = Date.now();
-    return expandEvents(events, now, now + 90 * 864e5)
+    const soon = now + 24 * 3600e3;
+    const up = expandEvents(events, now, now + 30 * 864e5)
       .filter((o) => o.endTime >= now)
-      .sort((a, b) => a.startTime - b.startTime)
-      .slice(0, 12)
-      .map((o) => {
-        const cal = cals.find((c) => c.id === o.calendarId);
-        const d = new Date(o.startTime);
-        return {
-          title: o.title || "(untitled)",
-          timeLabel: o.allDay ? "All day" : d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }),
-          dateLabel: d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }),
-          calendar: cal ? displayName(cal) : "",
-          color: colorFor(o.calendarId),
-        };
+      .sort((a, b) => a.startTime - b.startTime);
+    let picked = up.filter((o) => o.startTime <= soon);
+    if (picked.length === 0) picked = up.slice(0, 3);
+    picked = picked.slice(0, 12);
+    const startOfDay = (t: number) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
+    const t0 = startOfDay(now);
+    const dayLabel = (t: number) => {
+      const diff = Math.round((startOfDay(t) - t0) / 864e5);
+      if (diff === 0) return "Today";
+      if (diff === 1) return "Tomorrow";
+      return new Date(t).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+    };
+    const rows: any[] = [];
+    let lastDay = -1;
+    for (const o of picked) {
+      const day = startOfDay(o.startTime);
+      if (day !== lastDay) { rows.push({ type: "header", label: dayLabel(o.startTime) }); lastDay = day; }
+      const cal = cals.find((c) => c.id === o.calendarId);
+      const d = new Date(o.startTime);
+      rows.push({
+        type: "event",
+        title: o.title || "(untitled)",
+        timeLabel: o.allDay ? "All day" : d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }),
+        calendar: cal ? displayName(cal) : "",
+        color: colorFor(o.calendarId),
       });
+    }
+    return rows;
   }, [events, cals, displayName, colorFor]);
   useEffect(() => { updateWidgetAgenda(widgetItems); }, [widgetItems]);
 
