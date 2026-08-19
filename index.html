@@ -392,7 +392,7 @@
       <div class="card">
         <div class="ic" style="--cc:var(--yellow)"><svg viewBox="0 0 24 24"><path d="M12 2 4 6v6c0 5 3.4 8 8 10 4.6-2 8-5 8-10V6z"/><path d="M9 12l2 2 4-4"/></svg></div>
         <h3>Signed by your key</h3>
-        <p>Each calendar is authored by an identity you pick. Flip on <b>signatures-required</b> and the fold drops any unsigned write.</p>
+        <p>Each calendar is authored by an identity you pick — every write is signed, and the fold drops anything unsigned or from a key the calendar won’t accept. No server to trust.</p>
         <span class="kick">— niente scherzi</span>
       </div>
       <div class="card">
@@ -420,7 +420,7 @@
       <div class="spot-in">
         <div class="spot-copy">
           <h3 class="disp">Three kinds of key.</h3>
-          <p>Bind any calendar to any of them — or mint a fresh one so its events can’t be tied to your others. A signatures-required calendar accepts writes only from its bound key; the fold quietly drops the rest.</p>
+          <p>Bind any calendar to any of them — or mint a fresh one so its events can’t be tied to your others. Every write is signed; the fold quietly drops anything unsigned or from a key the calendar won’t accept.</p>
         </div>
         <div class="idlist">
           <div class="id"><div class="k">📱</div><div><div class="t">Device</div><div class="d">The built-in software key. Always there, zero setup — perfect for personal calendars.</div></div><span class="tag">default</span></div>
@@ -436,20 +436,20 @@
   <div class="wrap">
     <p class="eyebrow">Andiamo · get it</p>
     <h2 class="section-head disp">Install on desktop or Android.</h2>
-    <p class="section-head" style="margin-top:14px;color:var(--ink-soft)">Open and self-hosted. Scala ships from a home-LAN repo today — add it from a device on the same network.</p>
+    <p class="section-head" style="margin-top:14px;color:var(--ink-soft)">Open and self-hosted. Android installs from the public apps.vpavlin.xyz F-Droid repo; the desktop module ships from a home-LAN Basecamp repo.</p>
     <div class="plat">
       <div class="pcard">
         <span class="badge" style="--cc:var(--green)">Android</span>
         <h3>F-Droid repo</h3>
-        <p>Add the Loam F-Droid repo — the fingerprint pins it as its own source — then install Scala and let it update in place.</p>
-        <code class="fpurl mono">https://192.168.0.152:8444/loam-fdroid/repo<span class="k">?fingerprint=</span>E7E9C568E721B8197C8D583A2F5B79E0A008FFB4734B48CC21BD50ED7CEE013B</code>
+        <p>Add the apps.vpavlin.xyz F-Droid repo — the fingerprint pins it as its own source — then install Scala and let it update in place.</p>
+        <code class="fpurl mono">https://apps.vpavlin.xyz/fdroid/repo<span class="k">?fingerprint=</span>2373710A76ACB09F287F053E99E533F9D3685529C44E9027CDBC79B1DC0C9105</code>
       </div>
       <div class="pcard">
         <span class="badge" style="--cc:var(--sky)">Desktop</span>
         <h3>Basecamp module</h3>
         <p>In Basecamp, add the vpavlin-home repo, then install <span class="mono">scala</span> and its view. Same fold as the phone — they converge.</p>
         <code class="fpurl mono">https://192.168.0.152:8444/basecamp/index.json</code>
-        <p class="note">Both repos are self-hosted over the home LAN (self-signed TLS) — reachable from the same network.</p>
+        <p class="note">The Android repo is public at apps.vpavlin.xyz; the desktop Basecamp repo is self-hosted over the home LAN (self-signed TLS).</p>
       </div>
     </div>
   </div>
