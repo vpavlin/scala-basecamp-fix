@@ -344,7 +344,9 @@ export default function App() {
       setNewCalName(""); setNewCalDesc(""); setNewCalSchema([]); setNewCalCanAdd(false);
       setNf({ key: "", label: "", type: "text" });
       setCurrentCalId(cal.id); setLastInvite(buildInvite(cal));
-      await startSyncing(undefined, setStatus);
+      // Fire-and-forget: the calendar is already saved locally. Awaiting node bring-up here stalled
+      // ~10s offline and, if it threw, surfaced a false "nothing was saved" + duplicate-creating Retry.
+      startSyncing(undefined, setStatus).catch(() => {});
       setQr({ value: buildInvite(cal), title: cal.name }); // show the QR right away
     } catch (e: any) { onKeycardAbort(e, () => doCreateCal()); }
   };
@@ -354,13 +356,13 @@ export default function App() {
     setScanning(false);
     const cal = await joinFromInvite(data.trim(), joinIdentity || undefined);
     if (!cal) { Alert.alert("Not a Scala invite", "That QR isn't a scala://join link."); return; }
-    await startSyncing(undefined, setStatus);
+    startSyncing(undefined, setStatus).catch(() => {});   // fire-and-forget (offline-safe): the join is already persisted
     Alert.alert("Joined", `Syncing "${cal.name}"`);
   };
   const doJoin = async () => {
     const cal = await joinFromInvite(invite.trim(), joinIdentity || undefined);
     if (!cal) { Alert.alert("Bad invite", "Expected a scala://join?cal=…&key=… link"); return; }
-    setInvite(""); await startSyncing(undefined, setStatus);
+    setInvite(""); startSyncing(undefined, setStatus).catch(() => {});   // fire-and-forget (offline-safe): the join is already persisted
     Alert.alert("Joined", `Syncing "${cal.name}"`);
   };
   const toggleShared = async (v: boolean) => { setShared(v); await setSharedNode(v); Alert.alert(v ? "Shared node ON" : "Shared node OFF", "Restart Scala to apply."); };
