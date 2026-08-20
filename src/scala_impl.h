@@ -80,6 +80,7 @@ public:
 
     /// List all events in a calendar. Returns JSON array string.
     std::string listEvents(const std::string& calendarId);
+    std::string listAllEvents();
 
     /// #4: per-event edit history — [{author,at,action,payload}] from the raw log.
     std::string getEventHistory(const std::string& calId, const std::string& eventId);

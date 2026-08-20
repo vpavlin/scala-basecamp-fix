@@ -184,8 +184,6 @@ bool ScalaImpl::authorEvent(const std::string& type, const json& payload, const 
         json meta = json::parse(modules().loam_core.identityForContainer(calId), nullptr, false);
         if (meta.is_object()) { kind = meta.value("kind", std::string()); signer = meta.value("address", std::string()); }
     } catch (...) {}
-    fprintf(stderr, "[scala] authorEvent cal=%s type=%s -> kind='%s' signer=%s (keycard=%d)\n",
-            calId.c_str(), type.c_str(), kind.c_str(), signer.c_str(), (int)(kind == "keycard" && !signer.empty())); fflush(stderr);
     if (kind != "keycard" || signer.empty()) return false;
 
     scala::Event e; e.v = 1; e.id = generateUuid(); e.type = type; e.payload = payload;
@@ -394,7 +392,7 @@ void ScalaImpl::ensureDelivery() { if (m_sync) m_sync->bootstrap(); }
 // ── identity ─────────────────────────────────────────────────────────────────
 // Keep in sync with metadata.json "version". The view compares this to the minimum it needs and
 // shows an "update the scala core" banner if the core is older (or lacks this method entirely).
-std::string ScalaImpl::coreVersion() const { return "0.9.5"; }
+std::string ScalaImpl::coreVersion() const { return "0.9.6"; }
 std::string ScalaImpl::getIdentity() const { return m_identity; }
 void ScalaImpl::setIdentity(const std::string& pubkeyHex) {
     if (m_identity != pubkeyHex) { m_identity = pubkeyHex; m_store->kvSet("identity", m_identity); identityChanged(); }
@@ -421,10 +419,6 @@ std::string ScalaImpl::createCalendar(const std::string& name, const std::string
     if (bindId.empty()) { try { json d = json::parse(modules().loam_core.getDefaultIdentityId(), nullptr, false);
         if (d.is_string()) bindId = d.get<std::string>(); } catch (...) {} }   // getDefaultIdentityId returns a JSON-quoted string
     if (!bindId.empty()) { try { modules().loam_core.bindContainer(id, bindId); } catch (...) {} }
-    { std::string k, addr; try { json m = json::parse(modules().loam_core.identityForContainer(id), nullptr, false);
-        if (m.is_object()) { k = m.value("kind", std::string()); addr = m.value("address", std::string()); } } catch (...) {}
-      fprintf(stderr, "[scala] createCalendar id=%s identityIdIn='%s' boundTo='%s' -> resolvedKind='%s' addr=%s\n",
-              id.c_str(), identityId.c_str(), bindId.c_str(), k.c_str(), addr.c_str()); fflush(stderr); }
     authorAndPublish(scala::ET::CAL_META, json{{"name", name}, {"color", color}}, id);
     return id;
 }
@@ -467,7 +461,12 @@ std::string ScalaImpl::listCalendars() {
         json f = scala::foldCalendar(c.id, m_store->log(c.id));
         std::string nm = f.value("name", std::string()); if (nm.empty()) nm = c.name;
         std::string col = f.value("color", std::string()); if (col.empty()) col = c.color;
-        arr.push_back(json{{"id", c.id}, {"name", nm}, {"color", col},
+        // Resolve the calendar's authoring identity ADDRESS here (once), so the view gets it in this
+        // single listCalendars call instead of making one blocking loam IPC per calendar in refresh().
+        std::string authorAddr;
+        try { json im = json::parse(modules().loam_core.identityForContainer(c.id), nullptr, false);
+              if (im.is_object()) authorAddr = im.value("address", std::string()); } catch (...) {}
+        arr.push_back(json{{"id", c.id}, {"name", nm}, {"color", col}, {"authorAddr", authorAddr},
                            {"isShared", true}, {"encryptionKey", c.key}, {"creatorId", m_identity},
                            // #7/#8/#3: surface description, custom-field schema and roles to the view.
                            {"description", f.value("description", std::string())},
@@ -480,6 +479,17 @@ std::string ScalaImpl::listCalendars() {
                            {"open", f.value("open", true)}});
     }
     return arr.dump();
+}
+// All events across ALL calendars in ONE call (each tagged with calendarId), so refresh() doesn't
+// make a blocking listEvents IPC per calendar. The view filters/expands client-side.
+std::string ScalaImpl::listAllEvents() {
+    ensureDelivery();
+    json out = json::array();
+    for (const auto& c : m_store->calendars()) {
+        json f = scala::foldCalendar(c.id, m_store->log(c.id));
+        for (auto& ev : f["events"]) { ev["calendarId"] = c.id; out.push_back(ev); }
+    }
+    return out.dump();
 }
 bool ScalaImpl::deleteCalendar(const std::string& id) {
     m_sync->stopSync(id); m_store->removeCalendar(id); return true;

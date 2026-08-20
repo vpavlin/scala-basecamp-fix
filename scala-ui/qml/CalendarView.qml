@@ -136,20 +136,14 @@ Item {
     function refresh() {
         if (!root.ready) return
         refreshIdentities()
+        // RULE: no per-item blocking IPC in QML. The core aggregates everything the view needs into
+        // two calls — listCalendars carries each calendar's authoring address (loam binding), and
+        // listAllEvents returns every event tagged with calendarId — instead of 2·N blocking calls.
         calendars = j(core("listCalendars", []), [])
-        // Resolve each calendar's authoring identity ADDRESS (loam_core binding) for permission checks.
         var ca = {}
-        for (var ci = 0; ci < calendars.length; ci++) {
-            var im = root.j(loamCore("identityForContainer", [calendars[ci].id]), null)
-            ca[calendars[ci].id] = (im && im.address) ? im.address : ""
-        }
+        for (var ci = 0; ci < calendars.length; ci++) ca[calendars[ci].id] = calendars[ci].authorAddr || ""
         root.calAddr = ca
-        var all = []
-        for (var i = 0; i < calendars.length; i++) {
-            var evs = j(core("listEvents", [calendars[i].id]), [])
-            for (var k = 0; k < evs.length; k++) all.push(evs[k])
-        }
-        events = all
+        events = j(core("listAllEvents", []), [])
     }
     // Deterministic color derived from the calendar id — SAME on desktop + mobile,
     // so a calendar looks consistent across devices regardless of a stored color.
