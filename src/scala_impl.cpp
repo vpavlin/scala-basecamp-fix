@@ -373,10 +373,15 @@ void ScalaImpl::onContextReady() {
             return;
         }
         PendingKc pk = it->second; m_pendingKc.erase(it);
-        if (err) { emitKcStatus(pk.calId, ref, "event", "failed", emsg); return; }
+        // A keycard write that never got signed: if the calendar has NO applied events, it's an empty
+        // orphan from a create whose first cal.meta never landed (cancelled/failed tap). Remove it so a
+        // failed keycard create leaves nothing behind, instead of a name-only ghost calendar. (Only
+        // keycard calendars can be event-less; device/soft author cal.meta synchronously at create.)
+        auto cleanupOrphan = [this, &pk] { if (m_store->log(pk.calId).empty()) { m_sync->stopSync(pk.calId); m_store->removeCalendar(pk.calId); } };
+        if (err) { cleanupOrphan(); emitKcStatus(pk.calId, ref, "event", "failed", emsg); return; }
         pk.event.pub = r.value("pub", std::string());
         pk.event.sig = r.value("sig", std::string());
-        if (pk.event.pub.empty() || pk.event.sig.empty()) { emitKcStatus(pk.calId, ref, "event", "failed", "empty signature"); return; }
+        if (pk.event.pub.empty() || pk.event.sig.empty()) { cleanupOrphan(); emitKcStatus(pk.calId, ref, "event", "failed", "empty signature"); return; }
         publishAndApply(pk.calId, pk.event);          // now it's a fully-signed event
         emitKcStatus(pk.calId, ref, "event", "done", "");
     });
@@ -387,7 +392,7 @@ void ScalaImpl::ensureDelivery() { if (m_sync) m_sync->bootstrap(); }
 // ── identity ─────────────────────────────────────────────────────────────────
 // Keep in sync with metadata.json "version". The view compares this to the minimum it needs and
 // shows an "update the scala core" banner if the core is older (or lacks this method entirely).
-std::string ScalaImpl::coreVersion() const { return "0.9.2"; }
+std::string ScalaImpl::coreVersion() const { return "0.9.3"; }
 std::string ScalaImpl::getIdentity() const { return m_identity; }
 void ScalaImpl::setIdentity(const std::string& pubkeyHex) {
     if (m_identity != pubkeyHex) { m_identity = pubkeyHex; m_store->kvSet("identity", m_identity); identityChanged(); }

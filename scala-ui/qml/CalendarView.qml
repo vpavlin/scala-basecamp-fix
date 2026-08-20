@@ -1220,7 +1220,11 @@ Item {
             // listCalendars) or the id comes back quoted and updateCalendarMeta targets the
             // WRONG calendar, so description/custom-fields silently never save on create.
             // Color is DERIVED from the calendar id (calColor), never chosen — pass "".
-            var id = String(root.j(root.core("createCalendar", [newCalName.text.trim(), "", root.newCalIdentity]), ""))
+            // Bind the RESOLVED identity — the explicit pick, or (nothing picked) the highlighted
+            // default. Passing "" would leave the calendar unbound, and loam never signs with a keycard
+            // via the default, so a keycard default would silently fall back to device. WYSIWYG: the
+            // highlighted chip is what owns + signs the calendar.
+            var id = String(root.j(root.core("createCalendar", [newCalName.text.trim(), "", (root.newCalIdentity || root.defaultIdentityId)]), ""))
             if (id === "") { newCalPopup.close(); root.refresh(); return }
             var sch = []
             for (var i = 0; i < newCalSchemaModel.count; i++) {
@@ -1652,7 +1656,7 @@ Item {
                 LogosButton { text: "Cancel"; onClicked: joinPopup.close() }
                 LogosButton {
                     text: "Join"; enabled: joinLink.text.trim().length > 0
-                    onClicked: { root.core("handleShareLink", [joinLink.text.trim(), root.joinIdentity]); joinPopup.close(); root.refresh() }
+                    onClicked: { root.core("handleShareLink", [joinLink.text.trim(), (root.joinIdentity || root.defaultIdentityId)]); joinPopup.close(); root.refresh() }
                 }
             }
         }
