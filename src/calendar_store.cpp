@@ -1,3 +1,4 @@
+#include <set>
 #include "calendar_store.h"
 
 #include <fstream>
@@ -49,9 +50,16 @@ std::vector<scala::CalReg> CalendarStore::calendars() const {
     std::vector<scala::CalReg> out;
     json arr = readJson(calFile());
     if (!arr.is_array()) return out;
+    // Dedup by id (first-wins). upsertCalendar updates every matching row but never removes extras,
+    // so a calendars.json that ever picked up duplicate ids (older builds / a write race) would render
+    // each calendar N times forever. Collapsing here fixes the display immediately and, because
+    // upsert/remove rewrite the file from this list, self-heals calendars.json on the next write.
+    std::set<std::string> seen;
     for (auto& j : arr) {
         if (!j.is_object() || !j.contains("id")) continue;
-        out.push_back({ j.value("id", std::string()), j.value("key", std::string()),
+        std::string id = j.value("id", std::string());
+        if (id.empty() || !seen.insert(id).second) continue;
+        out.push_back({ id, j.value("key", std::string()),
                         j.value("name", std::string()), j.value("color", std::string()) });
     }
     return out;
