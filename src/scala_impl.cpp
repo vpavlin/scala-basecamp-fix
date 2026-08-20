@@ -184,6 +184,8 @@ bool ScalaImpl::authorEvent(const std::string& type, const json& payload, const 
         json meta = json::parse(modules().loam_core.identityForContainer(calId), nullptr, false);
         if (meta.is_object()) { kind = meta.value("kind", std::string()); signer = meta.value("address", std::string()); }
     } catch (...) {}
+    fprintf(stderr, "[scala] authorEvent cal=%s type=%s -> kind='%s' signer=%s (keycard=%d)\n",
+            calId.c_str(), type.c_str(), kind.c_str(), signer.c_str(), (int)(kind == "keycard" && !signer.empty())); fflush(stderr);
     if (kind != "keycard" || signer.empty()) return false;
 
     scala::Event e; e.v = 1; e.id = generateUuid(); e.type = type; e.payload = payload;
@@ -392,7 +394,7 @@ void ScalaImpl::ensureDelivery() { if (m_sync) m_sync->bootstrap(); }
 // ── identity ─────────────────────────────────────────────────────────────────
 // Keep in sync with metadata.json "version". The view compares this to the minimum it needs and
 // shows an "update the scala core" banner if the core is older (or lacks this method entirely).
-std::string ScalaImpl::coreVersion() const { return "0.9.3"; }
+std::string ScalaImpl::coreVersion() const { return "0.9.5"; }
 std::string ScalaImpl::getIdentity() const { return m_identity; }
 void ScalaImpl::setIdentity(const std::string& pubkeyHex) {
     if (m_identity != pubkeyHex) { m_identity = pubkeyHex; m_store->kvSet("identity", m_identity); identityChanged(); }
@@ -411,7 +413,18 @@ std::string ScalaImpl::createCalendar(const std::string& name, const std::string
     m_sync->startSync(id, key);
     // Bind the chosen identity in loam_core BEFORE authoring cal.meta, so the OWNER (the first
     // cal.meta's author) IS that identity (loam ADR 0004). Empty → the default identity.
-    if (!identityId.empty()) { try { modules().loam_core.bindContainer(id, identityId); } catch (...) {} }
+    // Bind the chosen identity, or (none passed) the CURRENT DEFAULT — at the core, so a new calendar
+    // reliably owns the identity the user picked even if the view sends nothing (stale QML). loam only
+    // suppresses a keycard DEFAULT for UNBOUND legacy containers; an explicit bind here is honored, so
+    // this is how a keycard-default user gets a keycard-owned calendar without hijacking old ones.
+    std::string bindId = identityId;
+    if (bindId.empty()) { try { json d = json::parse(modules().loam_core.getDefaultIdentityId(), nullptr, false);
+        if (d.is_string()) bindId = d.get<std::string>(); } catch (...) {} }   // getDefaultIdentityId returns a JSON-quoted string
+    if (!bindId.empty()) { try { modules().loam_core.bindContainer(id, bindId); } catch (...) {} }
+    { std::string k, addr; try { json m = json::parse(modules().loam_core.identityForContainer(id), nullptr, false);
+        if (m.is_object()) { k = m.value("kind", std::string()); addr = m.value("address", std::string()); } } catch (...) {}
+      fprintf(stderr, "[scala] createCalendar id=%s identityIdIn='%s' boundTo='%s' -> resolvedKind='%s' addr=%s\n",
+              id.c_str(), identityId.c_str(), bindId.c_str(), k.c_str(), addr.c_str()); fflush(stderr); }
     authorAndPublish(scala::ET::CAL_META, json{{"name", name}, {"color", color}}, id);
     return id;
 }
@@ -580,8 +593,12 @@ bool ScalaImpl::handleShareLink(const std::string& link, const std::string& iden
     m_store->upsertCalendar({ id, key, name, "" });
     m_sync->startSync(id, key);
     // Bind the chosen identity (loam ADR 0004) so YOUR events on this calendar are authored by it.
-    // (The owner is the inviter; this only sets who signs the joiner's writes.) Empty → default.
-    if (!identityId.empty()) { try { modules().loam_core.bindContainer(id, identityId); } catch (...) {} }
+    // (The owner is the inviter; this only sets who signs the joiner's writes.) None passed → the
+    // current default, resolved at the core so a keycard default works even if the view sends nothing.
+    std::string bindId = identityId;
+    if (bindId.empty()) { try { json d = json::parse(modules().loam_core.getDefaultIdentityId(), nullptr, false);
+        if (d.is_string()) bindId = d.get<std::string>(); } catch (...) {} }
+    if (!bindId.empty()) { try { modules().loam_core.bindContainer(id, bindId); } catch (...) {} }
     sendSyncReq(id);   // just joined → pull history
     return true;
 }
