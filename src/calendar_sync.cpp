@@ -90,6 +90,44 @@ bool SyncMessage::verify(const std::string &payload, const std::string &signatur
     return sign(payload, key) == signature;
 }
 
+// ── Deterministic AEAD nonce (loam-sync ADR 0011, domain "scala") ────────────
+// nonceFor(Ke, sealId) = HMAC-SHA256(Ke, "scala/nonce/v1|" + sealId)[0..11]
+// Deriving the 12-byte GCM nonce from a STABLE id makes a re-seal of the same
+// immutable event byte-identical, so the fleet store dedups it (a RANDOM nonce
+// never dedups). The HMAC key is the calendar's 32-byte AES key (Ke). The cipher
+// (AES-256-GCM), AAD (none), and wire layout are UNCHANGED. Byte-identical to the
+// mobile mirror (crypto.ts nonceFor) and to kym/qaku's cipher-agnostic scheme.
+static std::vector<unsigned char> nonceFor(const std::vector<unsigned char> &key,
+                                           const std::string &sealId) {
+    std::string msg = "scala/nonce/v1|" + sealId;
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int digestLen = 0;
+    HMAC(EVP_sha256(), key.data(), (int)key.size(),
+         (const unsigned char*)msg.data(), msg.size(), digest, &digestLen);
+    return std::vector<unsigned char>(digest, digest + 12);
+}
+
+// A fresh random 16-byte hex token — the sealId for frames that carry NO stable
+// event id (control/sync frames). This keeps their nonce effectively random so the
+// store does NOT collapse them (each is a distinct request), exactly as before.
+static std::string randomToken() {
+    unsigned char buf[16];
+    RAND_bytes(buf, sizeof buf);
+    return hexEncode(buf, sizeof buf);
+}
+
+// Pull the CRDT event's stable id (a UUIDv4 — the log's idempotency/dedup key) out
+// of the event JSON so it can seed the deterministic nonce. Falls back to a fresh
+// random token if the payload has no id (so nothing collapses by accident).
+static std::string sealIdForEvent(const std::string &eventJson) {
+    auto j = nlohmann::json::parse(eventJson, nullptr, false);
+    if (!j.is_discarded() && j.contains("id") && j["id"].is_string()) {
+        std::string id = j["id"].get<std::string>();
+        if (!id.empty()) return id;
+    }
+    return randomToken();
+}
+
 // ── CalendarSync ────────────────────────────────────────────────────────────
 
 CalendarSync::CalendarSync() {}
@@ -99,7 +137,9 @@ void CalendarSync::setMessageHandler(OnMessageReceived h) { m_onMessage = std::m
 void CalendarSync::setEventHandler(OnEventReceived h) { m_onEvent = std::move(h); }
 void CalendarSync::sendEvent(const std::string &calendarId, const std::string &eventJson) {
     if (!m_activeTopics.count(calendarId) || !m_tx || !m_tx->ready()) return;
-    std::string sealed = seal(calendarId, eventJson);
+    // Deterministic nonce from the event's stable id → re-seals are byte-identical
+    // and the store dedups them (ADR 0011).
+    std::string sealed = seal(calendarId, eventJson, sealIdForEvent(eventJson));
     m_tx->send(topicForCalendar(calendarId), sealed);
 }
 void CalendarSync::setStatusHandler(OnSyncStatus h) { m_onStatus = std::move(h); }
@@ -147,8 +187,9 @@ void CalendarSync::sendMessage(const std::string &calendarId, const SyncMessage 
         return;
     }
 
-    // Seal the message bytes
-    std::string sealed = seal(calendarId, msg.toBytes());
+    // Seal the message bytes. A SyncMessage is a control/sync frame with no stable
+    // event id, so use a fresh random token as the sealId — these must NOT dedup.
+    std::string sealed = seal(calendarId, msg.toBytes(), randomToken());
 
     // Send via transport (it does double-base64 framing)
     std::string topic = topicForCalendar(calendarId);
@@ -160,7 +201,8 @@ void CalendarSync::sendMessage(const std::string &calendarId, const SyncMessage 
 
 // ── Crypto helpers (seal/open) ─────────────────────────────────────────────
 
-std::string CalendarSync::seal(const std::string &calendarId, const std::string &plaintext) {
+std::string CalendarSync::seal(const std::string &calendarId, const std::string &plaintext,
+                               const std::string &sealId) {
     auto it = m_activeTopics.find(calendarId);
     if (it == m_activeTopics.end()) return plaintext; // fallback
 
@@ -171,9 +213,9 @@ std::string CalendarSync::seal(const std::string &calendarId, const std::string 
         sscanf(keyHex.c_str() + i * 2, "%2hhx", &key[i]);
     }
 
-    // Generate random nonce (12 bytes)
-    std::vector<unsigned char> nonce(12);
-    RAND_bytes(nonce.data(), 12);
+    // Derive the 12-byte nonce deterministically from the stable sealId (ADR 0011),
+    // instead of RAND_bytes. Same id → byte-identical seal → the store dedups it.
+    std::vector<unsigned char> nonce = nonceFor(key, sealId);
 
     // AES-256-GCM encrypt
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();

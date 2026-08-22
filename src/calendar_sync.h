@@ -112,8 +112,14 @@ private:
     // Device identity (set from ScalaImpl)
     std::string m_deviceId;
 
-    /// Seal bytes with calendar encryption key + random nonce.
-    std::string seal(const std::string &calendarId, const std::string &plaintext);
+    /// Seal bytes with the calendar's encryption key. The 12-byte AEAD nonce is
+    /// DERIVED from `sealId` (loam-sync ADR 0011): HMAC-SHA256(Ke,
+    /// "scala/nonce/v1|"+sealId)[0..11]. Passing an immutable event's id makes a
+    /// re-seal byte-identical so the fleet store dedups it; pass a fresh random
+    /// token for control frames that must NOT dedup. Cipher/AAD/wire layout are
+    /// unchanged (AES-256-GCM, nonce||tag||ciphertext).
+    std::string seal(const std::string &calendarId, const std::string &plaintext,
+                     const std::string &sealId);
 
     /// Open sealed bytes with calendar encryption key.
     std::optional<std::string> open(const std::string &calendarId, const std::string &sealedBytes);

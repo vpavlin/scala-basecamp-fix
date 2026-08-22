@@ -12,7 +12,7 @@
 //     on receive it hands candidate byte-arrays, we open() each with the
 //     calendar's key and take the first that authenticates.
 import * as transport from "./loam-transport";
-import { seal, open } from "./crypto";
+import { seal, open, randomSealId } from "./crypto";
 import { utf8Bytes, utf8Decode } from "./utf8";
 
 export function topicForCalendar(calendarId: string): string {
@@ -130,7 +130,17 @@ export async function joinCalendar(calendarId: string, encryptionKey: string): P
 export async function sendEvent(calendarId: string, eventJson: string): Promise<void> {
   const route = routes.find((r) => r.calendarId === calendarId);
   if (!route) return; // not a shared calendar / no key on this device
-  const sealed = seal(route.encryptionKey, utf8Bytes(eventJson));
+  // Derive the AEAD nonce from the event's stable id (ADR 0011) so a re-seal of the
+  // same immutable event is byte-identical → the fleet store dedups it. Fall back to
+  // a fresh random token if the JSON has no id (so nothing collapses by accident).
+  let sealId: string;
+  try {
+    const id = JSON.parse(eventJson)?.id;
+    sealId = typeof id === "string" && id.length > 0 ? id : randomSealId();
+  } catch {
+    sealId = randomSealId();
+  }
+  const sealed = seal(route.encryptionKey, utf8Bytes(eventJson), sealId);
   await transport.publishSealed(route.topic, sealed);
 }
 

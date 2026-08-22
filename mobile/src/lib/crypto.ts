@@ -9,14 +9,37 @@
 // test/crypto-parity.sh). The load-bearing quirk: C sscanf("%2hhx") parses a
 // dash-started window like "-a" as a SIGNED -10 → 0xf6, NOT 0. See crypto-derive.ts.
 import { gcm } from "@noble/ciphers/aes.js";
+import { hmac } from "@noble/hashes/hmac.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import * as Crypto from "expo-crypto";
 import { deriveKey } from "./crypto-derive";
 
+const enc = new TextEncoder();
+
+/** Deterministic 12-byte AEAD nonce (loam-sync ADR 0011, domain "scala"):
+ *    nonceFor(Ke, sealId) = HMAC-SHA256(Ke, "scala/nonce/v1|"+sealId)[0..11]
+ *  Deriving the nonce from a STABLE id (the event's id) makes a re-seal of the
+ *  same immutable event byte-identical, so the fleet store dedups it. The HMAC key
+ *  is the calendar's 32-byte AES key (Ke). Byte-identical to the desktop core
+ *  (calendar_sync.cpp nonceFor) and to kym/qaku's cipher-agnostic scheme. */
+export function nonceFor(key: Uint8Array, sealId: string): Uint8Array {
+  return hmac(sha256, key, enc.encode(`scala/nonce/v1|${sealId}`)).slice(0, 12);
+}
+
+/** A fresh random 16-byte hex token — the sealId for frames with NO stable event
+ *  id, so their nonce stays effectively random and the store does not collapse them. */
+export function randomSealId(): string {
+  return Array.from(Crypto.getRandomBytes(16), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 /** Seal plaintext bytes for a calendar: AES-256-GCM → nonce||tag||ciphertext,
- *  exactly the layout the desktop's open() expects. */
-export function seal(encryptionKey: string, plaintext: Uint8Array): Uint8Array {
+ *  exactly the layout the desktop's open() expects. The 12-byte nonce is DERIVED
+ *  from `sealId` (ADR 0011) instead of a random RNG draw — pass the event's stable
+ *  id so a re-seal is byte-identical and the store dedups it. Cipher/AAD/wire
+ *  layout are UNCHANGED. */
+export function seal(encryptionKey: string, plaintext: Uint8Array, sealId: string): Uint8Array {
   const key = deriveKey(encryptionKey);
-  const nonce = Crypto.getRandomBytes(12); // real RNG (Hermes has no WebCrypto)
+  const nonce = nonceFor(key, sealId); // deterministic (was Crypto.getRandomBytes(12))
   // @noble gcm returns ciphertext||tag (tag appended). The desktop packs
   // nonce||tag||ciphertext, so we split noble's output and re-pack.
   const ctAndTag = gcm(key, nonce).encrypt(plaintext);
